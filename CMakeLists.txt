@@ -60,6 +60,22 @@ if(NOT TARGET brotensor)
     endif()
 endif()
 
+# --- stb_image (vendored: decode + encode) ---
+#
+# Bundled because broimage is the home for image decode/encode in the stack;
+# the rest of the bro tree should depend on broimage for these, not roll its
+# own stb wrapper. Guarded so a parent build that already declared an
+# stb_image target (bro/third_party/CMakeLists.txt does) reuses it.
+if(NOT TARGET stb_image)
+    add_library(stb_image STATIC
+        third_party/stb/stb_image.cpp
+        third_party/stb/stb_image_write.cpp
+    )
+    target_include_directories(stb_image PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+    )
+endif()
+
 # --- broimage library ---
 
 add_library(broimage STATIC)
@@ -70,9 +86,12 @@ target_include_directories(broimage PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(broimage PUBLIC cxx_std_20)
-target_link_libraries(broimage PUBLIC
-    bromath::bromath
-    brotensor::brotensor
+target_link_libraries(broimage
+    PUBLIC
+        bromath::bromath
+        brotensor::brotensor
+    PRIVATE
+        stb_image
 )
 
 if(MSVC)
@@ -85,6 +104,15 @@ endif()
 
 target_sources(broimage PRIVATE
     src/version.cpp
+    src/decode.cpp
+    src/encode.cpp
+    src/color.cpp
+    src/geometric.cpp
+    src/normalize.cpp
+    src/preproc.cpp
+    src/presets.cpp
+    src/kernels.cpp
+    src/tensor_adapter.cpp
 )
 
 # --- Install ---

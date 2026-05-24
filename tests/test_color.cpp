@@ -67,5 +67,79 @@ int main() {
     CHECK(nearf(v_lin[0], 0.0f));
     CHECK(nearf(v_lin[4], 1.0f, 1e-4f));
 
+    // ----- HSV / HSL ---------------------------------------------------------
+    // Known conversions: pure red (1, 0, 0) -> H=0,    S=1, V=1
+    //                    pure green       -> H=1/3,  S=1, V=1
+    //                    pure blue        -> H=2/3,  S=1, V=1
+    const float rgb_test[9] = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+    float hsv_out[9];
+    broimage::rgb_to_hsv_f32(rgb_test, hsv_out, 3);
+    CHECK(nearf(hsv_out[0], 0.0f));        CHECK(nearf(hsv_out[1], 1.0f)); CHECK(nearf(hsv_out[2], 1.0f));
+    CHECK(nearf(hsv_out[3], 1.0f / 3.0f)); CHECK(nearf(hsv_out[4], 1.0f)); CHECK(nearf(hsv_out[5], 1.0f));
+    CHECK(nearf(hsv_out[6], 2.0f / 3.0f)); CHECK(nearf(hsv_out[7], 1.0f)); CHECK(nearf(hsv_out[8], 1.0f));
+
+    // RGB -> HSV -> RGB round trip over a small grid.
+    float trip[12] = { 0.1f, 0.5f, 0.9f,  0.7f, 0.2f, 0.4f,
+                       0.5f, 0.5f, 0.5f,  0.0f, 0.0f, 0.0f };
+    float trip_hsv[12], trip_back[12];
+    broimage::rgb_to_hsv_f32(trip, trip_hsv, 4);
+    broimage::hsv_to_rgb_f32(trip_hsv, trip_back, 4);
+    for (int i = 0; i < 12; ++i) CHECK(nearf(trip[i], trip_back[i], 1e-4f));
+
+    // RGB -> HSL -> RGB round trip.
+    float trip_hsl[12], trip_hsl_back[12];
+    broimage::rgb_to_hsl_f32(trip, trip_hsl, 4);
+    broimage::hsl_to_rgb_f32(trip_hsl, trip_hsl_back, 4);
+    for (int i = 0; i < 12; ++i) CHECK(nearf(trip[i], trip_hsl_back[i], 1e-4f));
+
+    // HSL lightness of grey 0.5 = 0.5, saturation = 0.
+    float grey[3] = { 0.5f, 0.5f, 0.5f };
+    float grey_hsl[3];
+    broimage::rgb_to_hsl_f32(grey, grey_hsl, 1);
+    CHECK(nearf(grey_hsl[1], 0.0f));
+    CHECK(nearf(grey_hsl[2], 0.5f));
+
+    // ----- Color matrix ------------------------------------------------------
+    // 3x3 identity preserves pixels.
+    const float I[9] = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+    float mid[12] = { 0.2f, 0.4f, 0.6f, 0.8f,
+                      0.3f, 0.5f, 0.7f, 0.9f,
+                      0.1f, 0.2f, 0.3f, 0.4f };
+    float midout[12];
+    broimage::apply_color_matrix_3x3_f32(mid, midout, 3, 4, I);
+    for (int i = 0; i < 12; ++i) CHECK(nearf(midout[i], mid[i]));
+
+    // Channel swap RGB -> BGR via 3x3, alpha unchanged.
+    const float swap[9] = { 0, 0, 1,  0, 1, 0,  1, 0, 0 };
+    broimage::apply_color_matrix_3x3_f32(mid, midout, 3, 4, swap);
+    CHECK(nearf(midout[0], 0.6f) && nearf(midout[1], 0.4f) && nearf(midout[2], 0.2f) && nearf(midout[3], 0.8f));
+
+    // 3x4 luma-with-bias: take just the green channel and shift by 0.1.
+    const float luma_bias[12] = {
+        0, 1, 0, 0.1f,
+        0, 1, 0, 0.1f,
+        0, 1, 0, 0.1f,
+    };
+    broimage::apply_color_matrix_3x4_f32(mid, midout, 3, 4, luma_bias);
+    for (int i = 0; i < 3; ++i) {
+        CHECK(nearf(midout[i * 4 + 0], mid[i * 4 + 1] + 0.1f));
+        CHECK(nearf(midout[i * 4 + 1], mid[i * 4 + 1] + 0.1f));
+        CHECK(nearf(midout[i * 4 + 2], mid[i * 4 + 1] + 0.1f));
+        CHECK(nearf(midout[i * 4 + 3], mid[i * 4 + 3])); // alpha pass-through
+    }
+
+    // 3 channel path: no alpha to preserve.
+    const float rgb_only[9] = { 1, 0, 0,  0, 1, 0,  0, 0, 1 };
+    float rgb_out[9];
+    broimage::apply_color_matrix_3x3_f32(rgb_only, rgb_out, 3, 3, swap);
+    CHECK(nearf(rgb_out[0], 0) && nearf(rgb_out[1], 0) && nearf(rgb_out[2], 1));
+    CHECK(nearf(rgb_out[3], 0) && nearf(rgb_out[4], 1) && nearf(rgb_out[5], 0));
+    CHECK(nearf(rgb_out[6], 1) && nearf(rgb_out[7], 0) && nearf(rgb_out[8], 0));
+
+    // In-place aliasing.
+    float alias[4] = { 0.2f, 0.4f, 0.6f, 0.8f };
+    broimage::apply_color_matrix_3x3_f32(alias, alias, 1, 4, swap);
+    CHECK(nearf(alias[0], 0.6f) && nearf(alias[1], 0.4f) && nearf(alias[2], 0.2f) && nearf(alias[3], 0.8f));
+
     return g_failed == 0 ? 0 : 1;
 }

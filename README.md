@@ -21,7 +21,8 @@ and the `image_preproc` ops that previously lived in brotensor.
   crop, letterbox / pad, flip, rotate.
 - **Alpha** — premultiply / unpremultiply and alpha-correct resize +
   letterbox for RGBA composites (no edge fringing on transparent inputs).
-- **Color** — RGBA ↔ RGB ↔ gray, HWC ↔ CHW, gamma, sRGB ↔ linear.
+- **Color** — RGBA ↔ RGB ↔ gray, HWC ↔ CHW, gamma, sRGB ↔ linear,
+  RGB ↔ HSV / HSL, 3x3 / 3x4 color-matrix apply.
 - **Normalize** — per-channel `(x - mean) / std`, with CLIP / ImageNet / SAM
   presets.
 - **Preproc** — `u8 NHWC → f32 NCHW` scale+bias shuffle, plus the plain

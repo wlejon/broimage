@@ -228,6 +228,17 @@ bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
     return true;
 }
 
+bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
+                             int* width, int* height, int* channels) {
+    int w = 0, h = 0, c = 0;
+    if (!stbi_info_from_memory(data, static_cast<int>(size), &w, &h, &c))
+        return false;
+    if (width)    *width    = w;
+    if (height)   *height   = h;
+    if (channels) *channels = c;
+    return true;
+}
+
 // ---- 16-bit / HDR decode ---------------------------------------------------
 
 bool decode_file_u16(const std::string& path, ImageU16& out, std::string* error) {

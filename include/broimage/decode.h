@@ -19,6 +19,14 @@ bool decode_file(const std::string& path, Image& out, std::string* error = nullp
 bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
                    std::string* error = nullptr);
 
+// Read just the dimensions of an encoded image without decoding pixels — cheap
+// header probe (a few hundred bytes) for sizing image elements or laying out
+// before the full decode lands. `channels` reports the encoded channel count
+// (1 / 3 / 4); `decode_memory` will always emit RGBA regardless. Returns false
+// (and leaves outputs untouched) on an unrecognized or truncated header.
+bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
+                             int* width, int* height, int* channels);
+
 // ----- High-bit-depth / HDR --------------------------------------------------
 //
 // 16-bit and float decode for formats that carry more than 8 bits per channel

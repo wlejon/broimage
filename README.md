@@ -15,6 +15,8 @@ and the `image_preproc` ops that previously lived in brotensor.
 ## Scope
 
 - **Decode / encode** — stb_image-backed RGBA load and PNG/JPEG write.
+  EXIF orientation honored on demand via `decode_file_oriented` (phone JPEGs
+  load upright instead of sideways).
 - **Geometric** — resize (nearest / bilinear / bicubic / lanczos3 / area),
   crop, letterbox / pad, flip, rotate.
 - **Color** — RGBA ↔ RGB ↔ gray, HWC ↔ CHW, gamma, sRGB ↔ linear.

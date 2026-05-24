@@ -15,8 +15,8 @@ and the `image_preproc` ops that previously lived in brotensor.
 ## Scope
 
 - **Decode / encode** — stb_image-backed RGBA load and PNG/JPEG write.
-- **Geometric** — resize (nearest / bilinear / bicubic), crop,
-  letterbox / pad, flip, rotate.
+- **Geometric** — resize (nearest / bilinear / bicubic / lanczos3 / area),
+  crop, letterbox / pad, flip, rotate.
 - **Color** — RGBA ↔ RGB ↔ gray, HWC ↔ CHW, gamma, sRGB ↔ linear.
 - **Normalize** — per-channel `(x - mean) / std`, with CLIP / ImageNet / SAM
   presets.

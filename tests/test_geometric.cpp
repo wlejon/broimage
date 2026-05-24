@@ -107,5 +107,55 @@ int main() {
     CHECK(rot[0] == 1 && rot[1] == 3 && rot[2] == 5);
     CHECK(rot[3] == 0 && rot[4] == 2 && rot[5] == 4);
 
+    // ----- Lanczos3 -----------------------------------------------------------
+    // Identity at same dims.
+    float lid[4];
+    broimage::resize_hwc_f32(src2, 2, 2, 1, lid, 2, 2, broimage::Filter::Lanczos3);
+    for (int i = 0; i < 4; ++i) CHECK(nearf(lid[i], src2[i], 1e-3f));
+
+    // Upsample a constant: Lanczos3 of a flat input must stay flat (weights
+    // sum to 1).
+    std::vector<float> flat(16, 0.42f);
+    std::vector<float> upflat(64);
+    broimage::resize_hwc_f32(flat.data(), 4, 4, 1, upflat.data(), 8, 8,
+                             broimage::Filter::Lanczos3);
+    for (float v : upflat) CHECK(nearf(v, 0.42f, 1e-4f));
+
+    // Downscale a constant 8x8 -> 4x4: stays constant.
+    std::vector<float> downflat(16);
+    broimage::resize_hwc_f32(upflat.data(), 8, 8, 1, downflat.data(), 4, 4,
+                             broimage::Filter::Lanczos3);
+    for (float v : downflat) CHECK(nearf(v, 0.42f, 1e-4f));
+
+    // ----- Area --------------------------------------------------------------
+    // 4x4 of value 10 averaged to 2x2 should be exactly 10 per cell.
+    std::vector<float> a16(16, 10.0f);
+    std::vector<float> a4(4);
+    broimage::resize_hwc_f32(a16.data(), 4, 4, 1, a4.data(), 2, 2,
+                             broimage::Filter::Area);
+    for (float v : a4) CHECK(nearf(v, 10.0f, 1e-5f));
+
+    // Integer 2x downscale of a known pattern: each 2x2 block averages.
+    // src:  0 4 0 4
+    //       4 0 4 0
+    //       0 4 0 4
+    //       4 0 4 0   -> every dst cell = 2.0
+    const float pattern[16] = {
+        0, 4, 0, 4,
+        4, 0, 4, 0,
+        0, 4, 0, 4,
+        4, 0, 4, 0,
+    };
+    float ap[4];
+    broimage::resize_hwc_f32(pattern, 4, 4, 1, ap, 2, 2, broimage::Filter::Area);
+    for (float v : ap) CHECK(nearf(v, 2.0f, 1e-5f));
+
+    // Area on upscale falls back to bilinear (documented). 2x2 -> 4x4 should
+    // match the bilinear result.
+    float a_up[16], b_up[16];
+    broimage::resize_hwc_f32(src2, 2, 2, 1, a_up, 4, 4, broimage::Filter::Area);
+    broimage::resize_hwc_f32(src2, 2, 2, 1, b_up, 4, 4, broimage::Filter::Bilinear);
+    for (int i = 0; i < 16; ++i) CHECK(nearf(a_up[i], b_up[i], 1e-5f));
+
     return g_failed == 0 ? 0 : 1;
 }

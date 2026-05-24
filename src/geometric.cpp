@@ -28,6 +28,18 @@ inline int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+inline float sinc(float x) {
+    if (std::fabs(x) < 1e-8f) return 1.0f;
+    const float px = 3.14159265358979323846f * x;
+    return std::sin(px) / px;
+}
+
+inline float lanczos3_weight(float t) {
+    const float at = std::fabs(t);
+    if (at >= 3.0f) return 0.0f;
+    return sinc(t) * sinc(t / 3.0f);
+}
+
 void resize_hwc_f32_nearest(const float* src, int sw, int sh, int ch,
                             float* dst, int dw, int dh) {
     for (int y = 0; y < dh; ++y) {
@@ -118,6 +130,172 @@ void resize_hwc_f32_bicubic(const float* src, int sw, int sh, int ch,
     }
 }
 
+// ---- Lanczos3 ---------------------------------------------------------------
+//
+// Separable two-pass: horizontal resize sw -> dw at original height, then
+// vertical resize sh -> dh. O(ch * (dw*sw_kernel + dw*dh*sh_kernel)) instead
+// of the O(ch * dw*dh*sw_kernel*sh_kernel) you'd get if we did it naively
+// (also keeps the kernel weights cached and reused across rows / columns).
+//
+// The kernel half-width in source pixels is `max(1, 3 * scale)` where scale
+// is the source-per-dst ratio. For downscales (scale > 1) we widen the window
+// to preserve the low-pass behaviour — using a fixed radius-3 kernel at large
+// reductions aliases just like bicubic.
+
+void resize_axis_lanczos3(const float* src, int src_w, int src_h, int ch,
+                          float* dst, int dst_w,
+                          bool axis_x) {
+    // axis_x == true:  src is (src_h, src_w, ch),  dst is (src_h, dst_w, ch)
+    // axis_x == false: src is (src_h, src_w, ch),  dst is (dst_w, src_w, ch)
+    //                  (here dst_w is actually the new height; the caller keeps
+    //                  the naming consistent for the precomputed weight table).
+    const int   sn    = axis_x ? src_w : src_h;
+    const float scale = static_cast<float>(sn) / static_cast<float>(dst_w);
+    const float fscale = std::max(1.0f, scale);
+    const float radius = 3.0f * fscale;
+    const int   ksz    = static_cast<int>(std::ceil(radius)) * 2;
+
+    // Precompute the weight table for the output axis. taps[i] are source-index
+    // contributions for dst index i, all normalized to sum to 1.
+    std::vector<int>   first(dst_w);
+    std::vector<float> weights(static_cast<std::size_t>(dst_w) * ksz, 0.0f);
+    for (int i = 0; i < dst_w; ++i) {
+        const float center = (i + 0.5f) * scale - 0.5f;
+        const int   lo     = static_cast<int>(std::floor(center - radius)) + 1;
+        first[i] = lo;
+        float wsum = 0.0f;
+        for (int k = 0; k < ksz; ++k) {
+            const float t = (static_cast<float>(lo + k) - center) / fscale;
+            const float w = lanczos3_weight(t);
+            weights[i * ksz + k] = w;
+            wsum += w;
+        }
+        if (wsum > 0.0f) {
+            const float inv = 1.0f / wsum;
+            for (int k = 0; k < ksz; ++k) weights[i * ksz + k] *= inv;
+        }
+    }
+
+    if (axis_x) {
+        for (int y = 0; y < src_h; ++y) {
+            for (int x = 0; x < dst_w; ++x) {
+                const float* wrow = &weights[x * ksz];
+                const int    lo   = first[x];
+                float* dp = dst + (y * dst_w + x) * ch;
+                for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
+                for (int k = 0; k < ksz; ++k) {
+                    const int sx = clampi(lo + k, 0, src_w - 1);
+                    const float w = wrow[k];
+                    const float* sp = src + (y * src_w + sx) * ch;
+                    for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
+                }
+            }
+        }
+    } else {
+        // dst layout: (dst_w aka new height, src_w, ch).
+        for (int y = 0; y < dst_w; ++y) {
+            const float* wrow = &weights[y * ksz];
+            const int    lo   = first[y];
+            for (int x = 0; x < src_w; ++x) {
+                float* dp = dst + (y * src_w + x) * ch;
+                for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
+                for (int k = 0; k < ksz; ++k) {
+                    const int sy = clampi(lo + k, 0, src_h - 1);
+                    const float w = wrow[k];
+                    const float* sp = src + (sy * src_w + x) * ch;
+                    for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
+                }
+            }
+        }
+    }
+}
+
+void resize_hwc_f32_lanczos3(const float* src, int sw, int sh, int ch,
+                             float* dst, int dw, int dh) {
+    if (dw == sw && dh == sh) {
+        std::memcpy(dst, src, static_cast<std::size_t>(sw) * sh * ch * sizeof(float));
+        return;
+    }
+    // Horizontal pass: (sh, sw, ch) -> (sh, dw, ch). Skip if width unchanged.
+    std::vector<float> mid;
+    const float* h_out;
+    int          h_out_w;
+    if (dw == sw) {
+        h_out = src; h_out_w = sw;
+    } else {
+        mid.resize(static_cast<std::size_t>(sh) * dw * ch);
+        resize_axis_lanczos3(src, sw, sh, ch, mid.data(), dw, /*axis_x=*/true);
+        h_out = mid.data(); h_out_w = dw;
+    }
+    // Vertical pass: (sh, h_out_w, ch) -> (dh, h_out_w, ch).
+    if (dh == sh) {
+        std::memcpy(dst, h_out,
+                    static_cast<std::size_t>(sh) * h_out_w * ch * sizeof(float));
+    } else {
+        resize_axis_lanczos3(h_out, h_out_w, sh, ch, dst, dh, /*axis_x=*/false);
+    }
+}
+
+// ---- Area / box ------------------------------------------------------------
+//
+// For each dst pixel, average the source pixels overlapped by the projected
+// source rectangle [x*scale_x, (x+1)*scale_x) x [y*scale_y, (y+1)*scale_y),
+// weighted by the fractional overlap on each edge. This is the standard
+// pixel-area filter; it's exact for integer downscale ratios and visibly
+// cleaner than bilinear for non-integer ones. Falls back to bilinear when
+// either axis is an upscale (no area-averaging meaning for the destination
+// being larger than the source on that axis).
+
+void resize_hwc_f32_area(const float* src, int sw, int sh, int ch,
+                         float* dst, int dw, int dh) {
+    if (dw >= sw || dh >= sh) {
+        // Defer to bilinear for any axis that's an upscale; area only makes
+        // sense for reductions. Mixed cases (down on one axis, up on the
+        // other) are uncommon enough that this is a fine simplification.
+        resize_hwc_f32_bilinear(src, sw, sh, ch, dst, dw, dh);
+        return;
+    }
+    const float sx = static_cast<float>(sw) / static_cast<float>(dw);
+    const float sy = static_cast<float>(sh) / static_cast<float>(dh);
+    for (int y = 0; y < dh; ++y) {
+        const float y0 = y * sy;
+        const float y1 = y0 + sy;
+        const int   iy0 = static_cast<int>(std::floor(y0));
+        const int   iy1 = static_cast<int>(std::ceil(y1));
+        for (int x = 0; x < dw; ++x) {
+            const float x0 = x * sx;
+            const float x1 = x0 + sx;
+            const int   ix0 = static_cast<int>(std::floor(x0));
+            const int   ix1 = static_cast<int>(std::ceil(x1));
+            float* dp = dst + (y * dw + x) * ch;
+            for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
+            float wtot = 0.0f;
+            for (int j = iy0; j < iy1; ++j) {
+                const float jy0 = std::max(static_cast<float>(j),      y0);
+                const float jy1 = std::min(static_cast<float>(j + 1),  y1);
+                const float wy  = jy1 - jy0;
+                if (wy <= 0.0f) continue;
+                const int sjy = clampi(j, 0, sh - 1);
+                for (int i = ix0; i < ix1; ++i) {
+                    const float ix0f = std::max(static_cast<float>(i),     x0);
+                    const float ix1f = std::min(static_cast<float>(i + 1), x1);
+                    const float wx   = ix1f - ix0f;
+                    if (wx <= 0.0f) continue;
+                    const int six = clampi(i, 0, sw - 1);
+                    const float w = wx * wy;
+                    wtot += w;
+                    const float* sp = src + (sjy * sw + six) * ch;
+                    for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
+                }
+            }
+            if (wtot > 0.0f) {
+                const float inv = 1.0f / wtot;
+                for (int c = 0; c < ch; ++c) dp[c] *= inv;
+            }
+        }
+    }
+}
+
 } // namespace
 
 void resize_hwc_f32(const float* src, int sw, int sh, int ch,
@@ -125,6 +303,8 @@ void resize_hwc_f32(const float* src, int sw, int sh, int ch,
     switch (filter) {
         case Filter::Nearest:  resize_hwc_f32_nearest(src, sw, sh, ch, dst, dw, dh); break;
         case Filter::Bicubic:  resize_hwc_f32_bicubic(src, sw, sh, ch, dst, dw, dh); break;
+        case Filter::Lanczos3: resize_hwc_f32_lanczos3(src, sw, sh, ch, dst, dw, dh); break;
+        case Filter::Area:     resize_hwc_f32_area(src, sw, sh, ch, dst, dw, dh); break;
         case Filter::Bilinear:
         default:               resize_hwc_f32_bilinear(src, sw, sh, ch, dst, dw, dh); break;
     }

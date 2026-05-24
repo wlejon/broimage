@@ -15,6 +15,12 @@ enum class Filter {
     Nearest,
     Bilinear,
     Bicubic,    // Catmull-Rom cubic
+    Lanczos3,   // Lanczos windowed sinc, radius 3 — the high-quality choice
+                // for upscales and arbitrary-ratio resizes.
+    Area,       // Box / area average. The correct choice for *downscales* —
+                // bilinear/bicubic alias badly at large reduction ratios.
+                // Falls back to bilinear when the destination is larger than
+                // the source (no upscale meaning for an area filter).
 };
 
 // HWC interleaved float32. dst must be at least dst_w*dst_h*channels floats.

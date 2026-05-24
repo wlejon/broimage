@@ -36,9 +36,16 @@ void resize_chw_f32(const float* src, int src_w, int src_h, int channels,
 
 // HWC interleaved uint8 (RGBA8 the decode_file output uses). dst must be at
 // least dst_w*dst_h*channels bytes. Computes in float internally then rounds.
+//
+// `src_stride_bytes` / `dst_stride_bytes` specify the byte distance between
+// successive rows. 0 means "tightly packed" (width * channels). Non-zero
+// strides let this op work on a sub-rectangle of a larger buffer (a tile in
+// an atlas, a slice of a video frame) without copying it out first.
 void resize_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
                    uint8_t*       dst, int dst_w, int dst_h,
-                   Filter filter = Filter::Bilinear);
+                   Filter filter = Filter::Bilinear,
+                   int src_stride_bytes = 0,
+                   int dst_stride_bytes = 0);
 
 // ----- Letterbox / pad -------------------------------------------------------
 //
@@ -54,37 +61,51 @@ void letterbox_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
                       int* out_w = nullptr, int* out_h = nullptr);
 
 // Constant-pad an HWC u8 image into a destination rectangle with the source
-// placed at (off_x, off_y). The source area outside dst is clipped.
+// placed at (off_x, off_y). The source area outside dst is clipped. Strides
+// follow the same convention as resize_hwc_u8 (0 = tightly packed).
 void pad_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
                 uint8_t*       dst, int dst_w, int dst_h,
                 int off_x, int off_y,
-                uint8_t pad_r, uint8_t pad_g, uint8_t pad_b, uint8_t pad_a);
+                uint8_t pad_r, uint8_t pad_g, uint8_t pad_b, uint8_t pad_a,
+                int src_stride_bytes = 0,
+                int dst_stride_bytes = 0);
 
 // ----- Crop ------------------------------------------------------------------
 //
 // Copies a [x, y, w, h] rect out of `src` into `dst` (which must be at least
 // w*h*channels bytes). Out-of-range pixels are clamped to the source edge.
+// Strides follow the same convention as resize_hwc_u8.
 void crop_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
                  uint8_t*       dst,
-                 int x, int y, int w, int h);
+                 int x, int y, int w, int h,
+                 int src_stride_bytes = 0,
+                 int dst_stride_bytes = 0);
 
 // Center-crop the largest centered square (or arbitrary rect) out of an HWC u8
 // image. Equivalent to crop_hwc_u8 with the rect derived from src dims.
 void center_crop_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
                         uint8_t*       dst,
-                        int crop_w, int crop_h);
+                        int crop_w, int crop_h,
+                        int src_stride_bytes = 0,
+                        int dst_stride_bytes = 0);
 
 // ----- Flip / rotate ---------------------------------------------------------
 
 void flip_horizontal_hwc_u8(const uint8_t* src, uint8_t* dst,
-                            int w, int h, int channels);
+                            int w, int h, int channels,
+                            int src_stride_bytes = 0,
+                            int dst_stride_bytes = 0);
 void flip_vertical_hwc_u8(const uint8_t* src, uint8_t* dst,
-                          int w, int h, int channels);
+                          int w, int h, int channels,
+                          int src_stride_bytes = 0,
+                          int dst_stride_bytes = 0);
 
 // Rotate by a multiple of 90 degrees. `turns` is the number of 90-CCW turns
 // (0..3; other values are reduced mod 4). dst dims swap when turns is odd.
 // dst must be sized for the rotated image.
 void rotate_90_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
-                      uint8_t* dst, int turns);
+                      uint8_t* dst, int turns,
+                      int src_stride_bytes = 0,
+                      int dst_stride_bytes = 0);
 
 } // namespace broimage

@@ -28,6 +28,10 @@ inline int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+inline int resolve_stride(int stride_bytes, int width, int channels) {
+    return stride_bytes > 0 ? stride_bytes : width * channels;
+}
+
 inline float sinc(float x) {
     if (std::fabs(x) < 1e-8f) return 1.0f;
     const float px = 3.14159265358979323846f * x;
@@ -321,55 +325,78 @@ void resize_chw_f32(const float* src, int sw, int sh, int ch,
 }
 
 void resize_hwc_u8(const uint8_t* src, int sw, int sh, int ch,
-                   uint8_t* dst, int dw, int dh, Filter filter) {
+                   uint8_t* dst, int dw, int dh, Filter filter,
+                   int src_stride_bytes, int dst_stride_bytes) {
     // Promote to float, resize, round back. Keeps a single bilinear/bicubic
     // implementation; the working-set is bounded by the larger of src or dst.
+    const int src_row = resolve_stride(src_stride_bytes, sw, ch);
+    const int dst_row = resolve_stride(dst_stride_bytes, dw, ch);
     const std::size_t src_n = static_cast<std::size_t>(sw) * sh * ch;
     const std::size_t dst_n = static_cast<std::size_t>(dw) * dh * ch;
     std::vector<float> sf(src_n);
     std::vector<float> df(dst_n);
-    for (std::size_t i = 0; i < src_n; ++i) sf[i] = static_cast<float>(src[i]);
+    for (int y = 0; y < sh; ++y) {
+        const uint8_t* srow = src + y * src_row;
+        float* fp = sf.data() + std::size_t(y) * sw * ch;
+        for (int i = 0; i < sw * ch; ++i) fp[i] = static_cast<float>(srow[i]);
+    }
     resize_hwc_f32(sf.data(), sw, sh, ch, df.data(), dw, dh, filter);
-    for (std::size_t i = 0; i < dst_n; ++i) {
-        float v = df[i];
-        if (v < 0.0f) v = 0.0f;
-        if (v > 255.0f) v = 255.0f;
-        dst[i] = static_cast<uint8_t>(v + 0.5f);
+    for (int y = 0; y < dh; ++y) {
+        uint8_t* drow = dst + y * dst_row;
+        const float* fp = df.data() + std::size_t(y) * dw * ch;
+        for (int i = 0; i < dw * ch; ++i) {
+            float v = fp[i];
+            if (v < 0.0f) v = 0.0f;
+            if (v > 255.0f) v = 255.0f;
+            drow[i] = static_cast<uint8_t>(v + 0.5f);
+        }
     }
 }
 
 void crop_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
-                 uint8_t* dst, int x, int y, int w, int h) {
+                 uint8_t* dst, int x, int y, int w, int h,
+                 int src_stride_bytes, int dst_stride_bytes) {
+    const int src_row = resolve_stride(src_stride_bytes, src_w, channels);
+    const int dst_row = resolve_stride(dst_stride_bytes, w,     channels);
     for (int j = 0; j < h; ++j) {
         const int sy = clampi(y + j, 0, src_h - 1);
+        uint8_t* drow = dst + j * dst_row;
+        const uint8_t* srow = src + sy * src_row;
         for (int i = 0; i < w; ++i) {
             const int sx = clampi(x + i, 0, src_w - 1);
-            const uint8_t* sp = src + (sy * src_w + sx) * channels;
-            uint8_t* dp = dst + (j * w + i) * channels;
+            const uint8_t* sp = srow + sx * channels;
+            uint8_t* dp = drow + i * channels;
             for (int c = 0; c < channels; ++c) dp[c] = sp[c];
         }
     }
 }
 
 void center_crop_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
-                        uint8_t* dst, int crop_w, int crop_h) {
+                        uint8_t* dst, int crop_w, int crop_h,
+                        int src_stride_bytes, int dst_stride_bytes) {
     const int x = (src_w - crop_w) / 2;
     const int y = (src_h - crop_h) / 2;
-    crop_hwc_u8(src, src_w, src_h, channels, dst, x, y, crop_w, crop_h);
+    crop_hwc_u8(src, src_w, src_h, channels, dst, x, y, crop_w, crop_h,
+                src_stride_bytes, dst_stride_bytes);
 }
 
 void pad_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
                 uint8_t* dst, int dst_w, int dst_h,
                 int off_x, int off_y,
-                uint8_t pad_r, uint8_t pad_g, uint8_t pad_b, uint8_t pad_a) {
+                uint8_t pad_r, uint8_t pad_g, uint8_t pad_b, uint8_t pad_a,
+                int src_stride_bytes, int dst_stride_bytes) {
+    const int src_row = resolve_stride(src_stride_bytes, src_w, channels);
+    const int dst_row = resolve_stride(dst_stride_bytes, dst_w, channels);
     const uint8_t pad[4] = { pad_r, pad_g, pad_b, pad_a };
     for (int y = 0; y < dst_h; ++y) {
+        uint8_t* drow = dst + y * dst_row;
+        const int sy = y - off_y;
+        const uint8_t* srow = (sy >= 0 && sy < src_h) ? src + sy * src_row : nullptr;
         for (int x = 0; x < dst_w; ++x) {
-            uint8_t* dp = dst + (y * dst_w + x) * channels;
+            uint8_t* dp = drow + x * channels;
             const int sx = x - off_x;
-            const int sy = y - off_y;
-            if (sx >= 0 && sx < src_w && sy >= 0 && sy < src_h) {
-                const uint8_t* sp = src + (sy * src_w + sx) * channels;
+            if (srow && sx >= 0 && sx < src_w) {
+                const uint8_t* sp = srow + sx * channels;
                 for (int c = 0; c < channels; ++c) dp[c] = sp[c];
             } else {
                 for (int c = 0; c < channels; ++c) {
@@ -409,54 +436,74 @@ void letterbox_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
 }
 
 void flip_horizontal_hwc_u8(const uint8_t* src, uint8_t* dst,
-                            int w, int h, int channels) {
+                            int w, int h, int channels,
+                            int src_stride_bytes, int dst_stride_bytes) {
+    const int src_row = resolve_stride(src_stride_bytes, w, channels);
+    const int dst_row = resolve_stride(dst_stride_bytes, w, channels);
     for (int y = 0; y < h; ++y) {
+        const uint8_t* srow = src + y * src_row;
+        uint8_t*       drow = dst + y * dst_row;
         for (int x = 0; x < w; ++x) {
-            const uint8_t* sp = src + (y * w + (w - 1 - x)) * channels;
-            uint8_t* dp = dst + (y * w + x) * channels;
+            const uint8_t* sp = srow + (w - 1 - x) * channels;
+            uint8_t* dp = drow + x * channels;
             for (int c = 0; c < channels; ++c) dp[c] = sp[c];
         }
     }
 }
 
 void flip_vertical_hwc_u8(const uint8_t* src, uint8_t* dst,
-                          int w, int h, int channels) {
-    const int row = w * channels;
+                          int w, int h, int channels,
+                          int src_stride_bytes, int dst_stride_bytes) {
+    const int src_row = resolve_stride(src_stride_bytes, w, channels);
+    const int dst_row = resolve_stride(dst_stride_bytes, w, channels);
+    const std::size_t copy_bytes = static_cast<std::size_t>(w) * channels;
     for (int y = 0; y < h; ++y) {
-        std::memcpy(dst + y * row, src + (h - 1 - y) * row,
-                    static_cast<std::size_t>(row));
+        std::memcpy(dst + y * dst_row,
+                    src + (h - 1 - y) * src_row,
+                    copy_bytes);
     }
 }
 
 void rotate_90_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
-                      uint8_t* dst, int turns) {
+                      uint8_t* dst, int turns,
+                      int src_stride_bytes, int dst_stride_bytes) {
     turns = ((turns % 4) + 4) % 4;
+    const int src_row = resolve_stride(src_stride_bytes, src_w, channels);
+    const int dst_w_dims = (turns % 2 == 0) ? src_w : src_h;
+    const int dst_row = resolve_stride(dst_stride_bytes, dst_w_dims, channels);
+
     if (turns == 0) {
-        std::memcpy(dst, src,
-                    static_cast<std::size_t>(src_w) * src_h * channels);
+        const std::size_t copy_bytes =
+            static_cast<std::size_t>(src_w) * channels;
+        for (int y = 0; y < src_h; ++y) {
+            std::memcpy(dst + y * dst_row, src + y * src_row, copy_bytes);
+        }
         return;
     }
     if (turns == 2) {
         for (int y = 0; y < src_h; ++y) {
+            const uint8_t* srow = src + (src_h - 1 - y) * src_row;
+            uint8_t*       drow = dst + y * dst_row;
             for (int x = 0; x < src_w; ++x) {
-                const uint8_t* sp = src + ((src_h - 1 - y) * src_w + (src_w - 1 - x)) * channels;
-                uint8_t* dp = dst + (y * src_w + x) * channels;
+                const uint8_t* sp = srow + (src_w - 1 - x) * channels;
+                uint8_t* dp = drow + x * channels;
                 for (int c = 0; c < channels; ++c) dp[c] = sp[c];
             }
         }
         return;
     }
-    // dst dims: (dh = src_w, dw = src_h). For dst[y, x]:
-    //   90 CCW (turns=1):  src[x, src_w-1-y]   — top row of dst = right column of src.
-    //   90 CW  (turns=3):  src[src_h-1-x, y]   — top row of dst = left column of src reversed.
+    // dst dims: (dh = src_w, dw = src_h).
+    //   turns == 1 (90 CCW):  src[x, src_w-1-y]
+    //   turns == 3 (90 CW):   src[src_h-1-x, y]
     const int dw = src_h, dh = src_w;
     for (int y = 0; y < dh; ++y) {
+        uint8_t* drow = dst + y * dst_row;
         for (int x = 0; x < dw; ++x) {
             int sx, sy;
             if (turns == 1) { sx = src_w - 1 - y; sy = x;             }
             else            { sx = y;             sy = src_h - 1 - x; }
-            const uint8_t* sp = src + (sy * src_w + sx) * channels;
-            uint8_t* dp = dst + (y * dw + x) * channels;
+            const uint8_t* sp = src + sy * src_row + sx * channels;
+            uint8_t* dp = drow + x * channels;
             for (int c = 0; c < channels; ++c) dp[c] = sp[c];
         }
     }

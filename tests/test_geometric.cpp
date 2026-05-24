@@ -157,5 +157,50 @@ int main() {
     broimage::resize_hwc_f32(src2, 2, 2, 1, b_up, 4, 4, broimage::Filter::Bilinear);
     for (int i = 0; i < 16; ++i) CHECK(nearf(a_up[i], b_up[i], 1e-5f));
 
+    // ----- Stride: crop a 2x2 tile out of a 4x4 atlas in-place. --------------
+    // 4x4 RGB atlas where each pixel's R = y*4 + x.
+    std::vector<uint8_t> atlas(4 * 4 * 3, 0);
+    for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+        atlas[(y * 4 + x) * 3 + 0] = static_cast<uint8_t>(y * 4 + x);
+    }
+    // Crop the (1, 1) 2x2 tile into a 2x2 dst that has a padded stride
+    // (e.g. dst is the top-left of a wider 3-pixel row, so dst_stride = 9 bytes).
+    std::vector<uint8_t> wide_dst(2 * 9, 0); // 2 rows * (3 pix * 3 ch) bytes
+    broimage::crop_hwc_u8(atlas.data(), 4, 4, 3, wide_dst.data(),
+                          1, 1, 2, 2,
+                          /*src_stride=*/0, /*dst_stride=*/9);
+    // Expected R values: atlas[1,1]=5, [2,1]=6, [1,2]=9, [2,2]=10.
+    CHECK(wide_dst[0 * 9 + 0] == 5);
+    CHECK(wide_dst[0 * 9 + 3] == 6);
+    CHECK(wide_dst[1 * 9 + 0] == 9);
+    CHECK(wide_dst[1 * 9 + 3] == 10);
+    // The "third pixel" slot of each row was never written: still zero.
+    CHECK(wide_dst[0 * 9 + 6] == 0);
+    CHECK(wide_dst[1 * 9 + 6] == 0);
+
+    // Read from a strided source: build a 4x4 atlas with row pitch 5 pixels
+    // (4 pixels + 1 byte of garbage). Crop should ignore the garbage.
+    const int sstride = 5 * 3;
+    std::vector<uint8_t> strided_src(4 * sstride, 0xCC);
+    for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+        strided_src[y * sstride + x * 3 + 0] = static_cast<uint8_t>(y * 4 + x);
+    }
+    std::vector<uint8_t> tile(2 * 2 * 3);
+    broimage::crop_hwc_u8(strided_src.data(), 4, 4, 3, tile.data(),
+                          1, 1, 2, 2, sstride, 0);
+    CHECK(tile[0] == 5 && tile[3] == 6);
+    CHECK(tile[6] == 9 && tile[9] == 10);
+
+    // Flip vertical with stride: 2x3 RGB with explicit src/dst strides.
+    const uint8_t fv_in[2 * 3] = {
+        1, 2, 3,
+        4, 5, 6,
+    };
+    // Use a destination with a row pitch of 5 bytes (2 bytes of slack per row).
+    uint8_t fv_out[2 * 5] = {};
+    broimage::flip_vertical_hwc_u8(fv_in, fv_out, 1, 2, 3, 0, 5);
+    CHECK(fv_out[0] == 4 && fv_out[1] == 5 && fv_out[2] == 6);
+    CHECK(fv_out[5] == 1 && fv_out[6] == 2 && fv_out[7] == 3);
+
     return g_failed == 0 ? 0 : 1;
 }

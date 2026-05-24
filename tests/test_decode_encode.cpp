@@ -2,6 +2,7 @@
 #include "broimage/decode.h"
 #include "broimage/encode.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -192,6 +193,38 @@ int main() {
             CHECK(id_at(im, x, y) == sy * 2 + sx);
         }
     }
+
+    // ----- 16-bit / HDR decode -----------------------------------------------
+    // Decode our 8-bit PNG via the u16 path; stb upscales by replicating the
+    // high byte, so 8-bit `v` -> 16-bit `(v << 8) | v`.
+    broimage::ImageU16 u16img;
+    CHECK(broimage::decode_file_u16(path, u16img));
+    CHECK(u16img.width == W && u16img.height == H && u16img.channels == 4);
+    for (size_t i = 0; i < src.size(); ++i) {
+        const uint16_t expected = static_cast<uint16_t>((uint16_t(src[i]) << 8) | src[i]);
+        CHECK(u16img.pixels[i] == expected);
+    }
+
+    // F32 path: same PNG, expect channels normalized to [0, 1].
+    broimage::ImageF32 f32img;
+    CHECK(broimage::decode_file_f32(path, f32img));
+    CHECK(f32img.width == W && f32img.height == H && f32img.channels == 4);
+    for (size_t i = 0; i < src.size(); ++i) {
+        const float expected = static_cast<float>(src[i]) / 255.0f;
+        // stbi_loadf passes 8-bit through srgb -> linear; allow a wide tolerance.
+        CHECK(std::abs(f32img.pixels[i] - expected) < 0.5f);
+    }
+
+    // Memory decode + failure path.
+    broimage::ImageU16 mem_u16;
+    CHECK(broimage::decode_memory_u16(mem.data(), mem.size(), mem_u16));
+    CHECK(mem_u16.width == W && mem_u16.height == H);
+
+    broimage::ImageU16 bad_u16;
+    std::string u16err;
+    CHECK(!broimage::decode_file_u16("does-not-exist-broimage-x.png", bad_u16, &u16err));
+    CHECK(bad_u16.empty());
+    CHECK(!u16err.empty());
 
     return g_failed == 0 ? 0 : 1;
 }

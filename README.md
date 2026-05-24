@@ -16,7 +16,8 @@ and the `image_preproc` ops that previously lived in brotensor.
 
 - **Decode / encode** — stb_image-backed RGBA load and PNG/JPEG write.
   EXIF orientation honored on demand via `decode_file_oriented` (phone JPEGs
-  load upright instead of sideways).
+  load upright instead of sideways). 16-bit (`decode_file_u16`) and
+  HDR / float (`decode_file_f32`) paths for depth maps and Radiance sources.
 - **Geometric** — resize (nearest / bilinear / bicubic / lanczos3 / area),
   crop, letterbox / pad, flip, rotate.
 - **Alpha** — premultiply / unpremultiply and alpha-correct resize +
@@ -28,9 +29,9 @@ and the `image_preproc` ops that previously lived in brotensor.
 - **Preproc** — `u8 NHWC → f32 NCHW` scale+bias shuffle, plus the plain
   NHWC ↔ NCHW float reshuffles. Host-side mirror of brotensor's
   `image_preproc` ops.
-- **Kernel verbs** — `reduce`, `map`, `combine`, `lookup`, `stencil`,
-  `resample`, `gradient` over flat typed buffers. The general image-math
-  surface that bro.image exposes to JS.
+- **Kernel verbs** — `reduce`, `map`, `combine`, `lookup`, `stencil`
+  (single-channel and multi-channel HWC), `resample`, `gradient` over flat
+  typed buffers. The general image-math surface that bro.image exposes to JS.
 - **Tensor adapter** — forwarders to brotensor's `image_normalize` and
   `image_u8_to_f32_nhwc_to_nchw` so callers reach for broimage even when
   the destination is a `brotensor::Tensor`.

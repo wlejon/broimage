@@ -247,6 +247,69 @@ void stencil_f32(const float* src, float* dst,
     }
 }
 
+void stencil_hwc_f32(const float* src, float* dst,
+                     int src_w, int src_h, int channels,
+                     const float* kernel, int kw, int kh,
+                     float divisor, float bias,
+                     StencilEdge edge) {
+    const float inv_div = (divisor != 0.0f) ? (1.0f / divisor) : 1.0f;
+    const int hkw = kw / 2;
+    const int hkh = kh / 2;
+
+    for (int y = 0; y < src_h; ++y) {
+        for (int x = 0; x < src_w; ++x) {
+            // One accumulator per channel; keeps the kernel-traversal loops
+            // outside, so the per-tap edge handling cost is paid once for all
+            // channels of the pixel instead of once per (pixel * channel).
+            float acc[8] = {0,0,0,0,0,0,0,0};
+            float* accp = acc;
+            std::vector<float> acc_heap;
+            if (channels > 8) {
+                acc_heap.assign(channels, 0.0f);
+                accp = acc_heap.data();
+            }
+            for (int ky = 0; ky < kh; ++ky) {
+                int sy = y + ky - hkh;
+                int syy = 0;
+                bool zero_row = false;
+                if (edge == StencilEdge::Clamp) {
+                    if (sy < 0) sy = 0;
+                    if (sy >= src_h) sy = src_h - 1;
+                    syy = sy;
+                } else if (edge == StencilEdge::Wrap) {
+                    syy = ((sy % src_h) + src_h) % src_h;
+                } else {
+                    if (sy < 0 || sy >= src_h) zero_row = true;
+                    else syy = sy;
+                }
+                for (int kx = 0; kx < kw; ++kx) {
+                    int sx = x + kx - hkw;
+                    int sxx = 0;
+                    bool zero = zero_row;
+                    if (!zero) {
+                        if (edge == StencilEdge::Clamp) {
+                            if (sx < 0) sx = 0;
+                            if (sx >= src_w) sx = src_w - 1;
+                            sxx = sx;
+                        } else if (edge == StencilEdge::Wrap) {
+                            sxx = ((sx % src_w) + src_w) % src_w;
+                        } else {
+                            if (sx < 0 || sx >= src_w) zero = true;
+                            else sxx = sx;
+                        }
+                    }
+                    const float w = kernel[ky * kw + kx];
+                    if (zero) continue;
+                    const float* sp = src + (syy * src_w + sxx) * channels;
+                    for (int c = 0; c < channels; ++c) accp[c] += w * sp[c];
+                }
+            }
+            float* dp = dst + (y * src_w + x) * channels;
+            for (int c = 0; c < channels; ++c) dp[c] = accp[c] * inv_div + bias;
+        }
+    }
+}
+
 // ----- resample --------------------------------------------------------------
 
 void resample_f32(const float* src, int src_w, int src_h,

@@ -228,6 +228,68 @@ bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
     return true;
 }
 
+// ---- 16-bit / HDR decode ---------------------------------------------------
+
+bool decode_file_u16(const std::string& path, ImageU16& out, std::string* error) {
+    int w = 0, h = 0, channels = 0;
+    stbi_us* pixels = stbi_load_16(path.c_str(), &w, &h, &channels, 4);
+    if (!pixels) {
+        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load_16 failed";
+        out = {};
+        return false;
+    }
+    out.width = w; out.height = h; out.channels = 4;
+    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
+    stbi_image_free(pixels);
+    return true;
+}
+
+bool decode_memory_u16(const uint8_t* data, std::size_t size, ImageU16& out,
+                       std::string* error) {
+    int w = 0, h = 0, channels = 0;
+    stbi_us* pixels = stbi_load_16_from_memory(data, static_cast<int>(size),
+                                               &w, &h, &channels, 4);
+    if (!pixels) {
+        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load_16_from_memory failed";
+        out = {};
+        return false;
+    }
+    out.width = w; out.height = h; out.channels = 4;
+    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
+    stbi_image_free(pixels);
+    return true;
+}
+
+bool decode_file_f32(const std::string& path, ImageF32& out, std::string* error) {
+    int w = 0, h = 0, channels = 0;
+    float* pixels = stbi_loadf(path.c_str(), &w, &h, &channels, 4);
+    if (!pixels) {
+        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_loadf failed";
+        out = {};
+        return false;
+    }
+    out.width = w; out.height = h; out.channels = 4;
+    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
+    stbi_image_free(pixels);
+    return true;
+}
+
+bool decode_memory_f32(const uint8_t* data, std::size_t size, ImageF32& out,
+                       std::string* error) {
+    int w = 0, h = 0, channels = 0;
+    float* pixels = stbi_loadf_from_memory(data, static_cast<int>(size),
+                                           &w, &h, &channels, 4);
+    if (!pixels) {
+        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_loadf_from_memory failed";
+        out = {};
+        return false;
+    }
+    out.width = w; out.height = h; out.channels = 4;
+    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
+    stbi_image_free(pixels);
+    return true;
+}
+
 bool decode_file_oriented(const std::string& path, Image& out,
                           std::string* error) {
     const ExifOrientation orient = read_exif_orientation_file(path);

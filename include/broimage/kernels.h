@@ -93,6 +93,17 @@ void stencil_f32(const float* src, float* dst,
                  float divisor = 1.0f, float bias = 0.0f,
                  StencilEdge edge = StencilEdge::Clamp);
 
+// Multi-channel HWC float convolution: the same kernel is applied to each
+// channel independently (per-channel `(sum k_i * src_i) / divisor + bias`).
+// This is what you actually want for blur / sharpen / edge filters on an
+// RGB(A) image — calling stencil_f32 once per channel works but forces the
+// caller to deinterleave first.
+void stencil_hwc_f32(const float* src, float* dst,
+                     int src_w, int src_h, int channels,
+                     const float* kernel, int kw, int kh,
+                     float divisor = 1.0f, float bias = 0.0f,
+                     StencilEdge edge = StencilEdge::Clamp);
+
 // ----- resample --------------------------------------------------------------
 //
 // HWC float32 resize. This is the same kernel as `geometric::resize_hwc_f32`

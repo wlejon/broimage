@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace broimage {
 
@@ -17,6 +18,43 @@ bool decode_file(const std::string& path, Image& out, std::string* error = nullp
 // Decode an image from an in-memory byte buffer (e.g. a fetched response body).
 bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
                    std::string* error = nullptr);
+
+// ----- High-bit-depth / HDR --------------------------------------------------
+//
+// 16-bit and float decode for formats that carry more than 8 bits per channel
+// — most importantly 16-bit PNGs (depth maps, masks for diffusion) and Radiance
+// .hdr / .pic files. stb_image supports both: stbi_load_16 / stbi_loadf. The
+// channel count is forced to 4 to match decode_file's RGBA convention.
+//
+// On failure the output `pixels`/`width`/`height` are cleared and the error
+// reason (if non-null) is set; there is no 1-pixel fallback for these — the
+// 8-bit fallback exists to match a bro JS contract that doesn't apply here.
+
+struct ImageU16 {
+    int width  = 0;
+    int height = 0;
+    int channels = 4;
+    std::vector<uint16_t> pixels;
+    bool empty() const { return pixels.empty(); }
+};
+
+struct ImageF32 {
+    int width  = 0;
+    int height = 0;
+    int channels = 4;
+    std::vector<float> pixels;
+    bool empty() const { return pixels.empty(); }
+};
+
+bool decode_file_u16(const std::string& path, ImageU16& out,
+                     std::string* error = nullptr);
+bool decode_memory_u16(const uint8_t* data, std::size_t size, ImageU16& out,
+                       std::string* error = nullptr);
+
+bool decode_file_f32(const std::string& path, ImageF32& out,
+                     std::string* error = nullptr);
+bool decode_memory_f32(const uint8_t* data, std::size_t size, ImageF32& out,
+                       std::string* error = nullptr);
 
 // ----- EXIF orientation ------------------------------------------------------
 //

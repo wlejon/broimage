@@ -138,5 +138,30 @@ int main() {
     CHECK(nearf(big[3],  1.0f, 0.05f));
     CHECK(nearf(big[15], 0.0f, 0.05f));
 
+    // ----- multi-channel stencil --------------------------------------------
+    // 3x3 RGB box-blur on a per-channel uniform field stays uniform per channel.
+    float rgb_uniform[3 * 3 * 3];
+    for (int i = 0; i < 9; ++i) {
+        rgb_uniform[i * 3 + 0] = 1.0f;
+        rgb_uniform[i * 3 + 1] = 2.0f;
+        rgb_uniform[i * 3 + 2] = 3.0f;
+    }
+    float rgb_out[3 * 3 * 3];
+    broimage::stencil_hwc_f32(rgb_uniform, rgb_out, 3, 3, 3, box, 3, 3, 9.0f);
+    for (int i = 0; i < 9; ++i) {
+        CHECK(nearf(rgb_out[i * 3 + 0], 1.0f));
+        CHECK(nearf(rgb_out[i * 3 + 1], 2.0f));
+        CHECK(nearf(rgb_out[i * 3 + 2], 3.0f));
+    }
+    // Identity kernel on a synthetic RGB image: pass-through per channel.
+    float rgb_img[3 * 3 * 3];
+    for (int i = 0; i < 9; ++i) {
+        rgb_img[i * 3 + 0] = static_cast<float>(i);
+        rgb_img[i * 3 + 1] = static_cast<float>(i * 2);
+        rgb_img[i * 3 + 2] = static_cast<float>(i * 3);
+    }
+    broimage::stencil_hwc_f32(rgb_img, rgb_out, 3, 3, 3, ident, 3, 3);
+    for (int i = 0; i < 27; ++i) CHECK(nearf(rgb_out[i], rgb_img[i]));
+
     return g_failed == 0 ? 0 : 1;
 }

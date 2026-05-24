@@ -108,6 +108,7 @@ target_sources(broimage PRIVATE
     src/encode.cpp
     src/color.cpp
     src/geometric.cpp
+    src/alpha.cpp
     src/normalize.cpp
     src/preproc.cpp
     src/presets.cpp

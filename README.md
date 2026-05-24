@@ -19,6 +19,8 @@ and the `image_preproc` ops that previously lived in brotensor.
   load upright instead of sideways).
 - **Geometric** — resize (nearest / bilinear / bicubic / lanczos3 / area),
   crop, letterbox / pad, flip, rotate.
+- **Alpha** — premultiply / unpremultiply and alpha-correct resize +
+  letterbox for RGBA composites (no edge fringing on transparent inputs).
 - **Color** — RGBA ↔ RGB ↔ gray, HWC ↔ CHW, gamma, sRGB ↔ linear.
 - **Normalize** — per-channel `(x - mean) / std`, with CLIP / ImageNet / SAM
   presets.

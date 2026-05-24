@@ -56,5 +56,30 @@ int main() {
     broimage::nchw_to_nhwc_f32(chw.data(), N, C, H, W, back.data());
     for (size_t i = 0; i < hwc.size(); ++i) CHECK(nearf(back[i], hwc[i]));
 
+    // ----- f32_nchw_to_u8_nhwc (inverse) -------------------------------------
+    // Round trip: u8 NHWC -> f32 NCHW [0,1] -> back to u8 NHWC.
+    broimage::u8_nhwc_to_f32_nchw(src.data(), N, H, W, C,
+                                  1.0f / 255.0f, 0.0f, Y.data());
+    std::vector<uint8_t> rt(src.size());
+    broimage::f32_nchw_to_u8_nhwc(Y.data(), N, C, H, W,
+                                  255.0f, 0.0f, rt.data());
+    // Lossless inversion: 255 * (x / 255) + 0 rounds back exactly to x.
+    for (size_t i = 0; i < src.size(); ++i) CHECK(rt[i] == src[i]);
+
+    // Round trip via [-1, 1].
+    broimage::u8_nhwc_to_f32_nchw(src.data(), N, H, W, C,
+                                  2.0f / 255.0f, -1.0f, Y.data());
+    broimage::f32_nchw_to_u8_nhwc(Y.data(), N, C, H, W,
+                                  127.5f, 127.5f, rt.data());
+    for (size_t i = 0; i < src.size(); ++i) CHECK(rt[i] == src[i]);
+
+    // Clamping: out-of-range values are clipped, not wrapped.
+    const float over[3] = { -1.0f, 0.5f, 999.0f }; // 1x3x1x1
+    uint8_t out3[3];
+    broimage::f32_nchw_to_u8_nhwc(over, 1, 3, 1, 1, 255.0f, 0.0f, out3);
+    CHECK(out3[0] == 0);
+    CHECK(out3[1] == 128); // 127.5 rounds to 128
+    CHECK(out3[2] == 255);
+
     return g_failed == 0 ? 0 : 1;
 }

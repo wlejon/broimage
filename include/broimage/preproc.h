@@ -25,4 +25,17 @@ void nchw_to_nhwc_f32(const float* src,
                       int N, int C, int H, int W,
                       float* Y);
 
+// Inverse of `u8_nhwc_to_f32_nchw`: `Y[n,h,w,c] = clamp(round(
+// src[n,c,h,w] * scale + bias), 0, 255)`. Round-trips a preprocessor
+// tensor back to a writable image (debug visualization, brodiffusion
+// decode side). The typical inverse scalings are:
+//   [0, 1]   -> [0, 255]  : scale = 255,    bias = 0
+//   [-1, 1]  -> [0, 255]  : scale = 127.5,  bias = 127.5
+//
+// Y must be sized for at least N*H*W*C bytes.
+void f32_nchw_to_u8_nhwc(const float* src,
+                         int N, int C, int H, int W,
+                         float scale, float bias,
+                         uint8_t* Y);
+
 } // namespace broimage

@@ -14,6 +14,11 @@ void gradient(const GradientStop* stops, int stop_count, int n,
     out.assign(static_cast<std::size_t>(n) * 4, 0);
     if (stop_count < 2 || n < 2) return;
 
+    // Per the header contract: a < 0 means "fully opaque" (255).
+    auto alpha_of = [](const GradientStop& s) {
+        return (s.a < 0.0f) ? 255.0f : s.a;
+    };
+
     int cur = 0;
     for (int i = 0; i < n; ++i) {
         const float t = static_cast<float>(i) / static_cast<float>(n - 1);
@@ -25,7 +30,7 @@ void gradient(const GradientStop* stops, int stop_count, int n,
             out[i * 4 + 0] = static_cast<uint8_t>(std::clamp(last.r, 0.0f, 255.0f));
             out[i * 4 + 1] = static_cast<uint8_t>(std::clamp(last.g, 0.0f, 255.0f));
             out[i * 4 + 2] = static_cast<uint8_t>(std::clamp(last.b, 0.0f, 255.0f));
-            out[i * 4 + 3] = static_cast<uint8_t>(std::clamp(last.a, 0.0f, 255.0f));
+            out[i * 4 + 3] = static_cast<uint8_t>(std::clamp(alpha_of(last), 0.0f, 255.0f));
             continue;
         }
 
@@ -36,10 +41,12 @@ void gradient(const GradientStop* stops, int stop_count, int n,
         if (t <= stops[0].t) u = 0.0f;
         u = std::clamp(u, 0.0f, 1.0f);
 
+        const float a0 = alpha_of(s0);
+        const float a1 = alpha_of(s1);
         const float r = s0.r + (s1.r - s0.r) * u;
         const float g = s0.g + (s1.g - s0.g) * u;
         const float b = s0.b + (s1.b - s0.b) * u;
-        const float a = s0.a + (s1.a - s0.a) * u;
+        const float a = a0    + (a1    - a0)    * u;
         out[i * 4 + 0] = static_cast<uint8_t>(std::clamp(r, 0.0f, 255.0f));
         out[i * 4 + 1] = static_cast<uint8_t>(std::clamp(g, 0.0f, 255.0f));
         out[i * 4 + 2] = static_cast<uint8_t>(std::clamp(b, 0.0f, 255.0f));
@@ -245,51 +252,12 @@ void stencil_f32(const float* src, float* dst,
 void resample_f32(const float* src, int src_w, int src_h,
                   float*       dst, int dst_w, int dst_h,
                   int channels,
-                  ResampleFilter filter) {
-    if (filter == ResampleFilter::Nearest) {
-        for (int y = 0; y < dst_h; ++y) {
-            int sy = static_cast<int>((y + 0.5f) * src_h / dst_h);
-            if (sy >= src_h) sy = src_h - 1;
-            for (int x = 0; x < dst_w; ++x) {
-                int sx = static_cast<int>((x + 0.5f) * src_w / dst_w);
-                if (sx >= src_w) sx = src_w - 1;
-                const float* sp = src + (sy * src_w + sx) * channels;
-                float* dp = dst + (y * dst_w + x) * channels;
-                for (int c = 0; c < channels; ++c) dp[c] = sp[c];
-            }
-        }
-        return;
-    }
-    // Bilinear.
-    const float xs = static_cast<float>(src_w) / static_cast<float>(dst_w);
-    const float ys = static_cast<float>(src_h) / static_cast<float>(dst_h);
-    for (int y = 0; y < dst_h; ++y) {
-        float fy = (y + 0.5f) * ys - 0.5f;
-        int y0 = static_cast<int>(std::floor(fy));
-        int y1 = y0 + 1;
-        float ty = fy - y0;
-        if (y0 < 0) { y0 = 0; ty = 0.0f; }
-        if (y1 >= src_h) { y1 = src_h - 1; ty = 1.0f; }
-        for (int x = 0; x < dst_w; ++x) {
-            float fx = (x + 0.5f) * xs - 0.5f;
-            int x0 = static_cast<int>(std::floor(fx));
-            int x1 = x0 + 1;
-            float tx = fx - x0;
-            if (x0 < 0) { x0 = 0; tx = 0.0f; }
-            if (x1 >= src_w) { x1 = src_w - 1; tx = 1.0f; }
-            const float* p00 = src + (y0 * src_w + x0) * channels;
-            const float* p01 = src + (y0 * src_w + x1) * channels;
-            const float* p10 = src + (y1 * src_w + x0) * channels;
-            const float* p11 = src + (y1 * src_w + x1) * channels;
-            float* dp = dst + (y * dst_w + x) * channels;
-            const float omtx = 1.0f - tx, omty = 1.0f - ty;
-            for (int c = 0; c < channels; ++c) {
-                const float v = (p00[c] * omtx + p01[c] * tx) * omty
-                              + (p10[c] * omtx + p11[c] * tx) * ty;
-                dp[c] = v;
-            }
-        }
-    }
+                  Filter filter) {
+    // Delegates to the geometric resize so kernel-verb callers and geometric
+    // callers share one implementation (and pick up any future improvements
+    // like SIMD / area filter in one place).
+    resize_hwc_f32(src, src_w, src_h, channels,
+                   dst, dst_w, dst_h, filter);
 }
 
 } // namespace broimage

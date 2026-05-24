@@ -1,5 +1,7 @@
 #pragma once
 
+#include "broimage/geometric.h"
+
 #include <cstdint>
 #include <vector>
 
@@ -97,13 +99,12 @@ void stencil_f32(const float* src, float* dst,
 // but exposed under the bro.image kernel-verb naming for the
 // "kernels-on-buffers" surface that brokit's JS API uses.
 //
-// (Reuses the geometric impl; kept here so the kernel verbs in this header
-// form a complete porting target for brokit's image bindings.)
-enum class ResampleFilter { Nearest, Bilinear };
-
+// Reuses the geometric Filter enum so callers don't have to translate between
+// "this is the resize op" and "this is the kernel verb spelling of the resize
+// op". Bicubic is supported here as well.
 void resample_f32(const float* src, int src_w, int src_h,
                   float*       dst, int dst_w, int dst_h,
                   int channels,
-                  ResampleFilter filter = ResampleFilter::Bilinear);
+                  Filter filter = Filter::Bilinear);
 
 } // namespace broimage

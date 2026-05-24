@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 namespace broimage {
 
@@ -142,21 +144,18 @@ void resize_hwc_u8(const uint8_t* src, int sw, int sh, int ch,
                    uint8_t* dst, int dw, int dh, Filter filter) {
     // Promote to float, resize, round back. Keeps a single bilinear/bicubic
     // implementation; the working-set is bounded by the larger of src or dst.
-    const int src_n = sw * sh * ch;
-    const int dst_n = dw * dh * ch;
-    // small-stack-avoid heuristic: heap-alloc both.
-    float* sf = new float[src_n];
-    float* df = new float[dst_n];
-    for (int i = 0; i < src_n; ++i) sf[i] = static_cast<float>(src[i]);
-    resize_hwc_f32(sf, sw, sh, ch, df, dw, dh, filter);
-    for (int i = 0; i < dst_n; ++i) {
+    const std::size_t src_n = static_cast<std::size_t>(sw) * sh * ch;
+    const std::size_t dst_n = static_cast<std::size_t>(dw) * dh * ch;
+    std::vector<float> sf(src_n);
+    std::vector<float> df(dst_n);
+    for (std::size_t i = 0; i < src_n; ++i) sf[i] = static_cast<float>(src[i]);
+    resize_hwc_f32(sf.data(), sw, sh, ch, df.data(), dw, dh, filter);
+    for (std::size_t i = 0; i < dst_n; ++i) {
         float v = df[i];
         if (v < 0.0f) v = 0.0f;
         if (v > 255.0f) v = 255.0f;
         dst[i] = static_cast<uint8_t>(v + 0.5f);
     }
-    delete[] sf;
-    delete[] df;
 }
 
 void crop_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
@@ -217,11 +216,11 @@ void letterbox_hwc_u8(const uint8_t* src, int src_w, int src_h, int channels,
     const int off_y = (dst_h - new_h) / 2;
 
     // Resize source into a scratch buffer at the target content rect, then pad.
-    uint8_t* scratch = new uint8_t[static_cast<std::size_t>(new_w) * new_h * channels];
-    resize_hwc_u8(src, src_w, src_h, channels, scratch, new_w, new_h, filter);
-    pad_hwc_u8(scratch, new_w, new_h, channels, dst, dst_w, dst_h,
+    std::vector<uint8_t> scratch(
+        static_cast<std::size_t>(new_w) * new_h * channels);
+    resize_hwc_u8(src, src_w, src_h, channels, scratch.data(), new_w, new_h, filter);
+    pad_hwc_u8(scratch.data(), new_w, new_h, channels, dst, dst_w, dst_h,
                off_x, off_y, pad_r, pad_g, pad_b, pad_a);
-    delete[] scratch;
 
     if (out_x) *out_x = off_x;
     if (out_y) *out_y = off_y;

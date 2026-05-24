@@ -133,7 +133,7 @@ int main() {
     const float small[4] = { 0, 1, 1, 0 };
     float big[16];
     broimage::resample_f32(small, 2, 2, big, 4, 4, 1,
-                           broimage::ResampleFilter::Bilinear);
+                           broimage::Filter::Bilinear);
     CHECK(nearf(big[0],  0.0f, 0.05f));
     CHECK(nearf(big[3],  1.0f, 0.05f));
     CHECK(nearf(big[15], 0.0f, 0.05f));

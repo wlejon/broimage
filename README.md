@@ -15,21 +15,25 @@ and the `image_preproc` ops that previously lived in brotensor.
 ## Scope
 
 - **Decode / encode** — stb_image-backed RGBA load and PNG/JPEG write.
-- **Geometric** — resize (nearest / bilinear / bicubic / lanczos), crop,
+- **Geometric** — resize (nearest / bilinear / bicubic), crop,
   letterbox / pad, flip, rotate.
 - **Color** — RGBA ↔ RGB ↔ gray, HWC ↔ CHW, gamma, sRGB ↔ linear.
-- **Normalize** — per-channel `(x - mean) / std`, with CLIP / ImageNet presets.
+- **Normalize** — per-channel `(x - mean) / std`, with CLIP / ImageNet / SAM
+  presets.
+- **Preproc** — `u8 NHWC → f32 NCHW` scale+bias shuffle, plus the plain
+  NHWC ↔ NCHW float reshuffles. Host-side mirror of brotensor's
+  `image_preproc` ops.
 - **Kernel verbs** — `reduce`, `map`, `combine`, `lookup`, `stencil`,
-  `resample` over flat typed buffers. The general image-math surface that
-  bro.image exposes to JS.
+  `resample`, `gradient` over flat typed buffers. The general image-math
+  surface that bro.image exposes to JS.
+- **Tensor adapter** — forwarders to brotensor's `image_normalize` and
+  `image_u8_to_f32_nhwc_to_nchw` so callers reach for broimage even when
+  the destination is a `brotensor::Tensor`.
 
 GPU image ops live in brotensor (one place for CUDA / Metal kernels); broimage
 calls into them when handed a GPU `brotensor::Tensor`.
 
-## Status
-
-Skeleton. Nothing implemented yet beyond `version_string()`. See
-[bro/docs/multi-repo-workflow.md](https://github.com/wlejon/bro/blob/main/docs/multi-repo-workflow.md)
+See [bro/docs/multi-repo-workflow.md](https://github.com/wlejon/bro/blob/main/docs/multi-repo-workflow.md)
 for how this slots into the multi-repo dev loop.
 
 ## Build

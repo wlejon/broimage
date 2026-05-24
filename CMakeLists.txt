@@ -1,0 +1,112 @@
+cmake_minimum_required(VERSION 3.24)
+project(broimage LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(MSVC)
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:/MP>
+        $<$<COMPILE_LANGUAGE:CXX>:/permissive->
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+    )
+    if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+endif()
+
+# --- GPU backend selection ---
+#
+# broimage ships no GPU kernels of its own. GPU image preprocessing
+# (image_normalize, u8_nhwc -> f32_nchw, future GPU resize) lives in
+# brotensor — broimage forwards the backend choice so a standalone GPU build
+# resolves brotensor's CUDA/Metal backend. Built inside bro, brotensor is
+# already a target (added transitively) and the if(NOT TARGET ...) guards
+# below reuse it, backend and all.
+option(BROTENSOR_WITH_CUDA  "Build the CUDA GPU backend"  OFF)
+option(BROTENSOR_WITH_METAL "Build the Metal GPU backend" OFF)
+
+# --- Siblings: bromath (header-only) + brotensor (tensor + ops) ---
+#
+# Prefer standalone repos at ../<name>; fall back to third_party/ submodules.
+# Matches the pattern documented in bro/docs/multi-repo-workflow.md.
+
+set(BROMATH_DIR "${CMAKE_SOURCE_DIR}/../bromath" CACHE PATH
+    "Path to standalone bromath repo (set to a missing path to force submodule fallback)")
+if(NOT TARGET bromath)
+    if(EXISTS "${BROMATH_DIR}/CMakeLists.txt")
+        add_subdirectory("${BROMATH_DIR}" "${CMAKE_BINARY_DIR}/bromath" EXCLUDE_FROM_ALL)
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/bromath/CMakeLists.txt")
+        add_subdirectory(third_party/bromath EXCLUDE_FROM_ALL)
+    else()
+        message(FATAL_ERROR
+            "bromath not found at ${BROMATH_DIR} or third_party/bromath. "
+            "Clone the bromath repo next to this repo, or override with -DBROMATH_DIR=...")
+    endif()
+endif()
+
+set(BROTENSOR_DIR "${CMAKE_SOURCE_DIR}/../brotensor" CACHE PATH
+    "Path to standalone brotensor repo (set to a missing path to force submodule fallback)")
+if(NOT TARGET brotensor)
+    if(EXISTS "${BROTENSOR_DIR}/CMakeLists.txt")
+        add_subdirectory("${BROTENSOR_DIR}" "${CMAKE_BINARY_DIR}/brotensor" EXCLUDE_FROM_ALL)
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brotensor/CMakeLists.txt")
+        add_subdirectory(third_party/brotensor EXCLUDE_FROM_ALL)
+    else()
+        message(FATAL_ERROR
+            "brotensor not found at ${BROTENSOR_DIR} or third_party/brotensor. "
+            "Clone the brotensor repo next to this repo, or override with -DBROTENSOR_DIR=...")
+    endif()
+endif()
+
+# --- broimage library ---
+
+add_library(broimage STATIC)
+add_library(broimage::broimage ALIAS broimage)
+
+target_include_directories(broimage PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_compile_features(broimage PUBLIC cxx_std_20)
+target_link_libraries(broimage PUBLIC
+    bromath::bromath
+    brotensor::brotensor
+)
+
+if(MSVC)
+    target_compile_options(broimage PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4>)
+else()
+    target_compile_options(broimage PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wall>
+        $<$<COMPILE_LANGUAGE:CXX>:-Wextra>)
+endif()
+
+target_sources(broimage PRIVATE
+    src/version.cpp
+)
+
+# --- Install ---
+#
+# Off by default: broimage is consumed as a sibling repo via the same
+# add_subdirectory pattern bro uses for its other libraries, not via
+# find_package. See brolm/CMakeLists.txt for the longer explanation of why
+# no CMake package config is generated.
+option(BROIMAGE_INSTALL "Install the broimage static library and public headers" OFF)
+if(BROIMAGE_INSTALL)
+    include(GNUInstallDirs)
+    install(TARGETS broimage
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
+
+# --- Tests ---
+option(BROIMAGE_TESTS "Build broimage tests" ON)
+if(BROIMAGE_TESTS AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

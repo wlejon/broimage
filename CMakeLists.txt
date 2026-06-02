@@ -113,6 +113,7 @@ target_sources(broimage PRIVATE
     src/preproc.cpp
     src/presets.cpp
     src/kernels.cpp
+    src/tiling.cpp
     src/tensor_adapter.cpp
 )
 

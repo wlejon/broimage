@@ -52,6 +52,13 @@ and the `image_preproc` ops that previously lived in brotensor.
 GPU image ops live in brotensor (one place for CUDA / Metal kernels); broimage
 calls into them when handed a GPU `brotensor::Tensor`.
 
+broimage's GPU story is brotensor *compute* (CUDA / Metal) on tensors — it has no
+WebGL and does not render. The JS `bro.image.gpu.*` surface (`colormap`, `fbm2D`)
+is a **WebGL2 renderer that lives in bro** (`bro/src/js/js/image_gpu.js`), not in
+broimage; it shares the `bro.image` namespace with these CPU kernels for
+ergonomics (e.g. the CPU `lookup` and GPU `colormap` both consume a LUT built by
+`bro.image.gradient`), but is a separate layer.
+
 See [bro/docs/multi-repo-workflow.md](https://github.com/wlejon/bro/blob/main/docs/multi-repo-workflow.md)
 for how this slots into the multi-repo dev loop.
 

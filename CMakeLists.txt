@@ -16,6 +16,17 @@ if(MSVC)
     endif()
 endif()
 
+# --- brotensor dependency (optional) ---
+#
+# broimage's only use of brotensor is the tensor_adapter TU (image_normalize
+# and the u8-NHWC -> f32-NCHW preprocessor), whose header merely forward-
+# declares brotensor::Tensor. The other 11 source files operate on host
+# pointers and never touch brotensor. So the whole brotensor dependency is
+# gated: with BROIMAGE_WITH_TENSOR=OFF broimage builds CPU-only with no Tensor
+# type at all, which is what a minimal `bro` build wants. Default ON preserves
+# the full image-preprocessing surface for standalone and AI-enabled builds.
+option(BROIMAGE_WITH_TENSOR "Build the brotensor adapter (image preprocessing to/from tensors)" ON)
+
 # --- GPU backend selection ---
 #
 # broimage ships no GPU kernels of its own. GPU image preprocessing
@@ -46,17 +57,19 @@ if(NOT TARGET bromath)
     endif()
 endif()
 
-set(BROTENSOR_DIR "${CMAKE_SOURCE_DIR}/../brotensor" CACHE PATH
-    "Path to standalone brotensor repo (set to a missing path to force submodule fallback)")
-if(NOT TARGET brotensor)
-    if(EXISTS "${BROTENSOR_DIR}/CMakeLists.txt")
-        add_subdirectory("${BROTENSOR_DIR}" "${CMAKE_BINARY_DIR}/brotensor" EXCLUDE_FROM_ALL)
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brotensor/CMakeLists.txt")
-        add_subdirectory(third_party/brotensor EXCLUDE_FROM_ALL)
-    else()
-        message(FATAL_ERROR
-            "brotensor not found at ${BROTENSOR_DIR} or third_party/brotensor. "
-            "Clone the brotensor repo next to this repo, or override with -DBROTENSOR_DIR=...")
+if(BROIMAGE_WITH_TENSOR)
+    set(BROTENSOR_DIR "${CMAKE_SOURCE_DIR}/../brotensor" CACHE PATH
+        "Path to standalone brotensor repo (set to a missing path to force submodule fallback)")
+    if(NOT TARGET brotensor)
+        if(EXISTS "${BROTENSOR_DIR}/CMakeLists.txt")
+            add_subdirectory("${BROTENSOR_DIR}" "${CMAKE_BINARY_DIR}/brotensor" EXCLUDE_FROM_ALL)
+        elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brotensor/CMakeLists.txt")
+            add_subdirectory(third_party/brotensor EXCLUDE_FROM_ALL)
+        else()
+            message(FATAL_ERROR
+                "brotensor not found at ${BROTENSOR_DIR} or third_party/brotensor. "
+                "Clone the brotensor repo next to this repo, or override with -DBROTENSOR_DIR=...")
+        endif()
     endif()
 endif()
 
@@ -89,10 +102,12 @@ target_compile_features(broimage PUBLIC cxx_std_20)
 target_link_libraries(broimage
     PUBLIC
         bromath::bromath
-        brotensor::brotensor
     PRIVATE
         stb_image
 )
+if(BROIMAGE_WITH_TENSOR)
+    target_link_libraries(broimage PUBLIC brotensor::brotensor)
+endif()
 
 if(MSVC)
     target_compile_options(broimage PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4>)
@@ -114,8 +129,10 @@ target_sources(broimage PRIVATE
     src/presets.cpp
     src/kernels.cpp
     src/tiling.cpp
-    src/tensor_adapter.cpp
 )
+if(BROIMAGE_WITH_TENSOR)
+    target_sources(broimage PRIVATE src/tensor_adapter.cpp)
+endif()
 
 # --- Install ---
 #

@@ -45,34 +45,46 @@ jobs:
       - name: Install Ninja
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
 
+      - name: Configure
+        run: cmake -S broimage -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      # Everything below is code we don't own: vendored stb, and the sibling
+      # checkouts that CMake compiles into this build. It gets built HERE, before
+      # CodeQL starts tracing — and that is the whole mechanism.
+      #
+      # For a compiled language, CodeQL analyses what it observes the compiler
+      # compile while tracing. Anything already built by the time `init` runs is
+      # simply never extracted. `paths-ignore` does NOT do this job: it is
+      # documented as not filtering compiled sources, and an earlier version of
+      # this file listed third_party/** there and still shipped 13 stb alerts to
+      # the Security tab. Building it out of the traced window is what works.
+      #
+      # Why bother, per target:
+      #
+      #   stb_image  — stb trips analysers by design (deliberate integer wrapping,
+      #     unchecked pointer walks in the decoders). Those findings are real
+      #     questions for upstream, not for us, and a permanent wall of alerts
+      #     nobody can action is exactly how a Security tab becomes something
+      #     everyone ignores — including on the day a genuine broimage bug lands.
+      #
+      #   brotensor_core / brotensor_cpu — analysed by brotensor's own CodeQL
+      #     workflow. Extracting them here would double-report every finding
+      #     against the wrong repo. (bromath needs no entry: it is header-only,
+      #     so it has no TUs of its own — its headers are analysed where broimage
+      #     includes them, which is correct.)
+      - name: Pre-build vendored + sibling code (outside the traced build)
+        run: cmake --build build --parallel 4 --target stb_image brotensor_core brotensor_cpu
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: c-cpp
           build-mode: manual
           queries: security-extended
-          # Ignore code we don't own and can't fix:
-          #
-          #   third_party/stb  — vendored stb_image. It is well-known for
-          #     tripping static analysers (deliberate integer wrapping, unchecked
-          #     pointer walks in the decoders). Real findings there belong
-          #     upstream, and leaving them in our Security tab means a permanent
-          #     wall of alerts nobody can action — which trains everyone to
-          #     ignore the tab, including when a real broimage bug lands in it.
-          #
-          #   bromath, brotensor — sibling checkouts. They are analysed by their
-          #     own CodeQL workflows; alerting on them here would double-report
-          #     every finding against the wrong repo.
-          config: |
-            paths-ignore:
-              - broimage/third_party/**
-              - bromath/**
-              - brotensor/**
 
-      - name: Build
-        run: |
-          cmake -S broimage -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build --parallel 4
+      # Only broimage's own TUs are left to compile, so only they are traced.
+      - name: Build broimage (traced)
+        run: cmake --build build --parallel 4
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4

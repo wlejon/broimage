@@ -180,17 +180,21 @@ void resize_axis_lanczos3(const float* src, int src_w, int src_h, int ch,
         }
     }
 
+    // The row terms are widened to size_t before multiplying. In int, an offset
+    // like (y * src_w + x) * ch overflows once the plane passes ~2^31 elements —
+    // a 30k x 30k RGB image gets there — and that is UB in the pointer
+    // arithmetic below, not merely a wrong index.
     if (axis_x) {
         for (int y = 0; y < src_h; ++y) {
             for (int x = 0; x < dst_w; ++x) {
-                const float* wrow = &weights[x * ksz];
+                const float* wrow = &weights[static_cast<size_t>(x) * ksz];
                 const int    lo   = first[x];
-                float* dp = dst + (y * dst_w + x) * ch;
+                float* dp = dst + (static_cast<size_t>(y) * dst_w + x) * ch;
                 for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
                 for (int k = 0; k < ksz; ++k) {
                     const int sx = clampi(lo + k, 0, src_w - 1);
                     const float w = wrow[k];
-                    const float* sp = src + (y * src_w + sx) * ch;
+                    const float* sp = src + (static_cast<size_t>(y) * src_w + sx) * ch;
                     for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
                 }
             }
@@ -198,15 +202,15 @@ void resize_axis_lanczos3(const float* src, int src_w, int src_h, int ch,
     } else {
         // dst layout: (dst_w aka new height, src_w, ch).
         for (int y = 0; y < dst_w; ++y) {
-            const float* wrow = &weights[y * ksz];
+            const float* wrow = &weights[static_cast<size_t>(y) * ksz];
             const int    lo   = first[y];
             for (int x = 0; x < src_w; ++x) {
-                float* dp = dst + (y * src_w + x) * ch;
+                float* dp = dst + (static_cast<size_t>(y) * src_w + x) * ch;
                 for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
                 for (int k = 0; k < ksz; ++k) {
                     const int sy = clampi(lo + k, 0, src_h - 1);
                     const float w = wrow[k];
-                    const float* sp = src + (sy * src_w + x) * ch;
+                    const float* sp = src + (static_cast<size_t>(sy) * src_w + x) * ch;
                     for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
                 }
             }

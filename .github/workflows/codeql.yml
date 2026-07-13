@@ -48,18 +48,18 @@ jobs:
       - name: Configure
         run: cmake -S broimage -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 
-      # Everything below is code we don't own: vendored stb, and the sibling
-      # checkouts that CMake compiles into this build. It gets built HERE, before
-      # CodeQL starts tracing — and that is the whole mechanism.
+      # Everything below is code this repo does not own: vendored stb, and the
+      # sibling checkouts CMake compiles into the build. Building it here, ahead
+      # of `init`, is what keeps it out of the analysis.
       #
-      # For a compiled language, CodeQL analyses what it observes the compiler
-      # compile while tracing. Anything already built by the time `init` runs is
-      # simply never extracted. `paths-ignore` does NOT do this job: it is
-      # documented as not filtering compiled sources, and an earlier version of
-      # this file listed third_party/** there and still shipped 13 stb alerts to
-      # the Security tab. Building it out of the traced window is what works.
+      # For a compiled language CodeQL analyses what it observes the compiler
+      # compile while tracing, so anything already built when `init` runs is
+      # never extracted. `paths-ignore` cannot do this job — it does not filter
+      # compiled sources — so the build order is the exclusion mechanism, and
+      # moving these targets into the traced build below silently puts every one
+      # of their findings back in the Security tab.
       #
-      # Why bother, per target:
+      # Why each target is excluded:
       #
       #   stb_image  — stb trips analysers by design (deliberate integer wrapping,
       #     unchecked pointer walks in the decoders). Those findings are real

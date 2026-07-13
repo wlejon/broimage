@@ -11,10 +11,11 @@ normalization, and composable typed-buffer kernels. Pure C++20, built on
 a backend is enabled). CPU-by-default; GPU paths forward to brotensor's
 CUDA / Metal backends.
 
-broimage is the single home for image work that used to be duplicated across
-the bro stack: bro's HTML `Image` decode and `bro.image` JS kernels, brolm's
+broimage is the single home for image work across the bro stack. Everything
+routes through it: bro's HTML `Image` decode and `bro.image` JS kernels, brolm's
 CLIP/SAM/VLM host-side resize + normalize, brodiffusion's pixel preprocessing,
-and the `image_preproc` ops that previously lived in brotensor.
+and the `image_preproc` ops. Nothing else in the tree should carry its own
+decode path or resize kernel.
 
 ## Scope
 

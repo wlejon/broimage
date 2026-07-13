@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 # Pre-1.0: siblings vendor this repo via add_subdirectory and build it from
 # source, so the version is a pin point for a tag, not an ABI promise.
-project(broimage VERSION 0.1.0 LANGUAGES CXX)
+project(broimage VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

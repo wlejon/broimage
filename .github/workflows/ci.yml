@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# broimage resolves its siblings from ../<name> (see the BROMATH_DIR /
+# BROTENSOR_DIR blocks in CMakeLists.txt), so every job here has to reconstruct
+# that layout in the runner workspace before configuring:
+#
+#     $GITHUB_WORKSPACE/
+#       broimage/   <- this repo, checked out into a named path, not the root
+#       bromath/
+#       brotensor/
+#
+# Hence `path:` on all three checkouts and `cmake -S broimage`. Checking this
+# repo out at the workspace root — the default — puts ../bromath *outside* the
+# workspace and the configure dies with the FATAL_ERROR from CMakeLists.
+#
+# The siblings are taken from main. That mirrors how the stack is actually
+# developed (everything tracks main; nothing is pinned), which means this CI
+# also catches a breaking change landing in bromath or brotensor — the failure
+# shows up here rather than the next time someone builds broimage by hand.
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-gcc,    os: ubuntu-24.04, cc: gcc,   cxx: g++ }
+          - { name: linux-clang,  os: ubuntu-24.04, cc: clang, cxx: clang++ }
+          - { name: windows-msvc, os: windows-2022 }
+          - { name: macos-arm64,  os: macos-14 }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: broimage
+
+      - uses: actions/checkout@v5
+        with:
+          repository: wlejon/bromath
+          path: bromath
+
+      - uses: actions/checkout@v5
+        with:
+          repository: wlejon/brotensor
+          path: brotensor
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      # BROIMAGE_WITH_TENSOR is ON by default, so this pulls in and compiles
+      # brotensor's CPU backend as well. That is the configuration brolm and
+      # brosoundml consume, so it is the one that has to stay green.
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -S broimage -B build -DCMAKE_BUILD_TYPE=Release
+          else
+            cmake -S broimage -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          fi
+        shell: bash
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  # ── Tensor-free tier ──────────────────────────────────────────────────────
+  #
+  # BROIMAGE_WITH_TENSOR=OFF drops the brotensor adapter entirely: no Tensor
+  # type, no GPU preprocessing, bromath the only sibling. It is what a minimal
+  # `bro` build asks for, and it is exactly the configuration that rots
+  # unnoticed — nobody develops in it, and every default build has the adapter
+  # on, so an #include or a symbol that leaks outside the BROIMAGE_WITH_TENSOR
+  # guard compiles fine everywhere except here.
+  no-tensor:
+    name: No brotensor · ubuntu-24.04
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: broimage
+
+      - uses: actions/checkout@v5
+        with:
+          repository: wlejon/bromath
+          path: bromath
+
+      - name: Install Ninja
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Configure
+        run: |
+          cmake -S broimage -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBROIMAGE_WITH_TENSOR=OFF
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # ── Coverage ──────────────────────────────────────────────────────────────
+  #
+  # Scoped to broimage's own src/ and include/. third_party/stb is excluded: it
+  # is vendored, we do not test it, and counting it would just drag the number
+  # down with lines nobody here is going to cover.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: broimage
+
+      - uses: actions/checkout@v5
+        with:
+          repository: wlejon/bromath
+          path: bromath
+
+      - uses: actions/checkout@v5
+        with:
+          repository: wlejon/brotensor
+          path: brotensor
+
+      - name: Install gcovr + Ninja
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gcovr ninja-build
+
+      - name: Configure (instrumented)
+        run: |
+          cmake -S broimage -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBROIMAGE_COVERAGE=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # pipefail: piping gcovr into tee otherwise hands the step tee's exit
+      # status, so a gcovr crash produces no report and the job still goes green.
+      - name: Report
+        shell: bash
+        working-directory: broimage
+        run: |
+          set -o pipefail
+          mkdir -p coverage-html
+          gcovr --root . \
+            --filter 'src/' --filter 'include/broimage/' \
+            --exclude 'third_party/' \
+            --exclude-unreachable-branches \
+            --print-summary \
+            --html-details coverage-html/index.html \
+            | tee coverage-summary.txt
+          test -s coverage-html/index.html
+
+      - name: Job summary
+        if: always()
+        working-directory: broimage
+        run: |
+          {
+            echo '## Coverage — `src/` + `include/broimage/`'
+            echo
+            echo 'Vendored `third_party/stb` is excluded: it is not ours and it is not tested here.'
+            echo
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: broimage/coverage-html/
+          retention-days: 14

@@ -1,0 +1,21 @@
+version: 2
+
+# No package manifest to watch: the siblings (bromath, brotensor) are vendored
+# by CMake from ../, and third_party/stb is a checked-in copy — neither is a
+# dependency Dependabot can resolve. That leaves the pinned actions in
+# .github/workflows/.
+#
+# Note that stb therefore updates by hand. It is four files and it changes
+# rarely, but nothing here will tell you when it does.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [ci]
+    commit-message:
+      prefix: "ci"

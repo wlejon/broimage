@@ -1,5 +1,9 @@
 # broimage
 
+[![CI](https://github.com/wlejon/broimage/actions/workflows/ci.yml/badge.svg)](https://github.com/wlejon/broimage/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/wlejon/broimage/actions/workflows/codeql.yml/badge.svg)](https://github.com/wlejon/broimage/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Image processing for the bro stack — decode/encode, geometric and color ops,
 normalization, and composable typed-buffer kernels. Pure C++20, built on
 [bromath](https://github.com/wlejon/bromath) and
@@ -76,3 +80,32 @@ GPU build resolves brotensor's CUDA / Metal backend (the GPU image kernels live
 there). Built inside the bro tree, brotensor is already a target and gets reused
 backend and all. Tests are on by default and build only for a standalone
 configure (`BROIMAGE_TESTS`); installation is opt-in via `BROIMAGE_INSTALL`.
+
+The siblings are resolved from `../bromath` and `../brotensor`, so clone them
+next to this repo (or point `BROMATH_DIR` / `BROTENSOR_DIR` elsewhere).
+
+## CI
+
+Builds and tests on Linux (GCC + Clang), Windows (MSVC) and macOS/arm64, in the
+default configuration that brolm and brosoundml consume. A separate job builds
+`BROIMAGE_WITH_TENSOR=OFF` — the minimal, Tensor-free configuration a bare `bro`
+build asks for. Nobody develops in it and every default build has the adapter on,
+so a symbol that leaks outside the `BROIMAGE_WITH_TENSOR` guard compiles fine
+everywhere except there; the job exists to catch that.
+
+Coverage of `src/` + `include/broimage/` lands in each run's job summary
+(`-DBROIMAGE_COVERAGE=ON` locally; GCC/Clang only). [CodeQL](.github/workflows/codeql.yml)
+analyses the decoders weekly and on every push — PNG/JPEG bytes are the most
+untrusted input in the stack, and the ops downstream index buffers using
+width/height arithmetic taken straight from a file header. Vendored
+`third_party/stb` is excluded from both: it isn't ours to fix, and its findings
+belong upstream.
+
+## Versioning
+
+Pre-1.0. Siblings vendor this repo via `add_subdirectory` and build from source,
+so a tag is a pin point rather than a compatibility promise.
+
+## License
+
+[MIT](LICENSE)

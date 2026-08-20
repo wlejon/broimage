@@ -105,6 +105,30 @@ if(NOT TARGET stb_image)
     )
 endif()
 
+# --- basis_universal transcoder (vendored: KTX2 -> GPU formats) ---
+#
+# Transcode-only slice of BinomialLLC/basis_universal (transcoder/ plus the
+# decompression-only zstd single file for Zstd-supercompressed KTX2). The
+# encoder is deliberately absent — authoring .ktx2 belongs to offline tools.
+if(NOT TARGET basisu_transcoder AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/basis_universal/transcoder/basisu_transcoder.cpp")
+    add_library(basisu_transcoder STATIC
+        third_party/basis_universal/transcoder/basisu_transcoder.cpp
+        third_party/basis_universal/zstd/zstddeclib.c
+    )
+    target_include_directories(basisu_transcoder PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/basis_universal/transcoder
+    )
+    if(MSVC)
+        target_compile_options(basisu_transcoder PRIVATE /W0)
+    else()
+        target_compile_options(basisu_transcoder PRIVATE -w)
+    endif()
+endif()
+if(NOT TARGET basisu_transcoder)
+    message(STATUS "broimage: basis_universal not found, KTX2 transcode disabled")
+endif()
+
 # --- broimage library ---
 
 add_library(broimage STATIC)
@@ -148,6 +172,11 @@ target_sources(broimage PRIVATE
 )
 if(BROIMAGE_WITH_TENSOR)
     target_sources(broimage PRIVATE src/tensor_adapter.cpp)
+endif()
+if(TARGET basisu_transcoder)
+    target_sources(broimage PRIVATE src/ktx2.cpp)
+    target_link_libraries(broimage PRIVATE basisu_transcoder)
+    target_compile_definitions(broimage PUBLIC BROIMAGE_HAS_KTX2=1)
 endif()
 
 # --- Install ---

@@ -112,6 +112,12 @@ endif()
 # encoder is deliberately absent — authoring .ktx2 belongs to offline tools.
 if(NOT TARGET basisu_transcoder AND
    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/basis_universal/transcoder/basisu_transcoder.cpp")
+    # zstddeclib.c is C, and this project() is CXX-only: without the language
+    # enabled, Ninja SILENTLY drops the file from the target and every ZSTD_*
+    # symbol goes undefined at link. The bro superbuild masks it (bro's own
+    # project() enables C), so this line is what keeps the standalone build
+    # honest.
+    enable_language(C)
     add_library(basisu_transcoder STATIC
         third_party/basis_universal/transcoder/basisu_transcoder.cpp
         third_party/basis_universal/zstd/zstddeclib.c

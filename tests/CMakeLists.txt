@@ -39,5 +39,23 @@ if(BROIMAGE_ENABLE_API)
     else()
         target_compile_options(broimage_test_api PRIVATE -Wall -Wextra)
     endif()
+    # bronze's shared runtime is built into BRONZE_SHARED_RUNTIME_DIR, not
+    # beside this executable, and the PE loader only looks beside the .exe
+    # (0xc0000135 + a modal "dll was not found" otherwise). Stage it next to
+    # the test as a post-build step and put both dirs on ctest's PATH.
+    if(WIN32)
+        add_custom_command(TARGET broimage_test_api POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:bronze_runtime_shared>
+                $<TARGET_FILE_DIR:broimage_test_api>
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_LINKER_FILE:bronze_runtime_shared>
+                $<TARGET_FILE_DIR:broimage_test_api>
+        )
+    endif()
     add_test(NAME broimage_test_api COMMAND broimage_test_api)
+    if(WIN32)
+        set_tests_properties(broimage_test_api PROPERTIES
+            ENVIRONMENT "PATH=$<TARGET_FILE_DIR:bronze_runtime_shared>;$<TARGET_FILE_DIR:broimage_test_api>;$ENV{PATH}")
+    endif()
 endif()

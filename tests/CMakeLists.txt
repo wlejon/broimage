@@ -24,3 +24,20 @@ endif()
 if(BROIMAGE_WITH_TENSOR)
     broimage_add_test(broimage_test_tensor_adapter  test_tensor_adapter.cpp)
 endif()
+
+if(BROIMAGE_ENABLE_API)
+    add_executable(broimage_test_api test_image_api.cpp)
+    target_include_directories(broimage_test_api PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/api
+    )
+    target_link_libraries(broimage_test_api PRIVATE
+        broimage_api
+        bronze_runtime_shared
+    )
+    if(MSVC)
+        target_compile_options(broimage_test_api PRIVATE /W4)
+    else()
+        target_compile_options(broimage_test_api PRIVATE -Wall -Wextra)
+    endif()
+    add_test(NAME broimage_test_api COMMAND broimage_test_api)
+endif()

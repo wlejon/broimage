@@ -176,15 +176,19 @@ jobs:
 
       # pipefail: piping gcovr into tee otherwise hands the step tee's exit
       # status, so a gcovr crash produces no report and the job still goes green.
+      #
+      # Run from the workspace root, where build/ is, with the filters spelled
+      # broimage/...: gcovr only looks for .gcda files under its root, and run
+      # from inside broimage/ with the build tree beside it, it found none and
+      # reported "0.0% (0 out of 0)" as a green job.
       - name: Report
         shell: bash
-        working-directory: broimage
         run: |
           set -o pipefail
           mkdir -p coverage-html
           gcovr --root . \
-            --filter 'src/' --filter 'include/broimage/' \
-            --exclude 'third_party/' \
+            --filter 'broimage/src/' --filter 'broimage/include/broimage/' \
+            --exclude 'broimage/third_party/' \
             --exclude-unreachable-branches \
             --print-summary \
             --html-details coverage-html/index.html \
@@ -193,7 +197,6 @@ jobs:
 
       - name: Job summary
         if: always()
-        working-directory: broimage
         run: |
           {
             echo '## Coverage — `src/` + `include/broimage/`'
@@ -210,5 +213,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage-html
-          path: broimage/coverage-html/
+          path: coverage-html/
           retention-days: 14

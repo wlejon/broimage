@@ -89,6 +89,19 @@ if(BROIMAGE_WITH_TENSOR)
     endif()
 endif()
 
+# --- brass dependency (JIT acceleration) ---
+find_package(OpenMP QUIET)
+set(BRASS_DIR "${CMAKE_SOURCE_DIR}/../brass" CACHE PATH
+    "Path to standalone brass repo (set to a missing path to force submodule fallback)")
+if(NOT TARGET brass)
+    if(EXISTS "${BRASS_DIR}/CMakeLists.txt")
+        add_subdirectory("${BRASS_DIR}" "${CMAKE_BINARY_DIR}/brass" EXCLUDE_FROM_ALL)
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brass/CMakeLists.txt")
+        add_subdirectory(third_party/brass EXCLUDE_FROM_ALL)
+    endif()
+endif()
+
+
 # --- stb_image (vendored: decode + encode) ---
 #
 # Bundled because broimage is the home for image decode/encode in the stack;
@@ -183,6 +196,17 @@ if(TARGET basisu_transcoder)
     target_sources(broimage PRIVATE src/ktx2.cpp)
     target_link_libraries(broimage PRIVATE basisu_transcoder)
     target_compile_definitions(broimage PUBLIC BROIMAGE_HAS_KTX2=1)
+endif()
+if(TARGET brass)
+    target_link_libraries(broimage PUBLIC brass)
+    target_compile_definitions(broimage PUBLIC BROIMAGE_HAS_BRASS_JIT=1)
+    target_sources(broimage PRIVATE
+        src/jit/image_pipeline.cpp
+        src/jit/jit_image_compiler.cpp
+    )
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(broimage PUBLIC OpenMP::OpenMP_CXX)
+    endif()
 endif()
 # --- Standalone Bronze JavaScript API ---
 option(BROIMAGE_ENABLE_API "Build Bronze JavaScript API" ON)

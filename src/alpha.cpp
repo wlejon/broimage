@@ -7,6 +7,10 @@
 #include <cstdint>
 #include <vector>
 
+#if BROIMAGE_HAS_BRASS_JIT
+#include "broimage/jit/jit_image_compiler.h"
+#endif
+
 namespace broimage {
 
 void premultiply_alpha_rgba8(const uint8_t* src, uint8_t* dst, int pixel_count) {
@@ -45,6 +49,13 @@ void unpremultiply_alpha_rgba8(const uint8_t* src, uint8_t* dst, int pixel_count
 void resize_rgba8_alpha(const uint8_t* src, int src_w, int src_h,
                         uint8_t*       dst, int dst_w, int dst_h,
                         Filter filter) {
+#if BROIMAGE_HAS_BRASS_JIT
+    if (filter == Filter::Bilinear) {
+        if (jit::JitImageCompiler::instance().execute_resize_rgba8(src, dst, src_w, src_h, dst_w, dst_h, true)) {
+            return;
+        }
+    }
+#endif
     const std::size_t src_n = static_cast<std::size_t>(src_w) * src_h;
     const std::size_t dst_n = static_cast<std::size_t>(dst_w) * dst_h;
     std::vector<uint8_t> prem_src(src_n * 4);

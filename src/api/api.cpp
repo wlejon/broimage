@@ -39,12 +39,18 @@ Value ensureBroImage() {
 void installCodecs() {
     Value img = ensureBroImage();
     installCodecsOnto(img);
+    // decode / probe / EXIF belong with the encoders: a host that mounts only
+    // the codec half still needs decodeF32 and friends.
+    installDecodeOnto(img);
 }
 
 void installImage() {
     Value img = ensureBroImage();
     installOpsOnto(img);
     installCodecsOnto(img);
+    installDecodeOnto(img);
+    installGeometryOnto(img);
+    installPreprocOnto(img);
 }
 
 } // namespace broimage::api

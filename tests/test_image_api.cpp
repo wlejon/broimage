@@ -8,6 +8,10 @@
 #include <iostream>
 #include <string>
 
+// tests/test_image_api_restored.cpp — the bro.image kernels the bronze port
+// dropped (bro's docs/transition-drift.md row E4).
+void broimageTestRestoredSurface();
+
 int main() {
     namespace ev = bronze::embed;
     using namespace bronze::eval;
@@ -185,6 +189,8 @@ int main() {
         assert(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: gradient [PASS]" << std::endl;
     }
+
+    broimageTestRestoredSurface();
 
     std::cout << "All broimage Bronze JavaScript API tests passed successfully!" << std::endl;
     return 0;

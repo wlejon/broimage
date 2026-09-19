@@ -83,6 +83,33 @@ inline bool getPropStr(Value obj, const char* key, std::string* out, const std::
     return false;
 }
 
+// Read `n` numbers from `obj[key]` (a JS array or a typed array). A missing
+// or null property falls back to `defVal` (pass nullptr to make it required).
+// Returns false when the property is present but not `n` numbers long.
+inline bool getPropFloats(Value obj, const char* key, float* out, int n,
+                          const float* defVal) {
+    Value v = ev::getProperty(obj, key);
+    if (ev::isUndefined(v) || ev::isNull(v)) {
+        if (!defVal) return false;
+        for (int i = 0; i < n; ++i) out[i] = defVal[i];
+        return true;
+    }
+    if (!ev::isObject(v)) return false;
+    auto info = ev::typedArrayInfo(v);
+    if (info.data && info.elementKind == ev::elements::Float32) {
+        if (info.byteLength < static_cast<size_t>(n) * sizeof(float)) return false;
+        const float* src = reinterpret_cast<const float*>(info.data);
+        for (int i = 0; i < n; ++i) out[i] = src[i];
+        return true;
+    }
+    Value lenV = ev::getProperty(v, "length");
+    if (!ev::isNumber(lenV) || static_cast<int>(ev::toDouble(lenV)) < n) return false;
+    for (int i = 0; i < n; ++i) {
+        out[i] = static_cast<float>(ev::toDouble(ev::getElement(v, static_cast<uint32_t>(i))));
+    }
+    return true;
+}
+
 inline float readScalar(const uint8_t* p, size_t bpe, bool isFloat, bool isSigned) {
     if (isFloat) {
         if (bpe == 4) return *reinterpret_cast<const float*>(p);
@@ -134,5 +161,12 @@ inline Value hostArrayOf(size_t count, const std::function<Value(size_t)>& make)
 Value ensureBroImage();
 void installCodecsOnto(Value imageObj);
 void installOpsOnto(Value imageObj);
+
+// The pre-transition bro.image members the bronze port dropped, split by
+// subject so each translation unit stays small: decode / probe / EXIF,
+// geometric + alpha, and layout / color-matrix / normalize / tiling.
+void installDecodeOnto(Value imageObj);
+void installGeometryOnto(Value imageObj);
+void installPreprocOnto(Value imageObj);
 
 } // namespace broimage::api

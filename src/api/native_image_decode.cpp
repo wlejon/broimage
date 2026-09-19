@@ -6,8 +6,9 @@
 // only the encoders, so `bro.image` lost every decode path that was not the
 // plain 8-bit one brokit supplies.
 //
-// Paths are used as given, exactly as encodePngFile does — a host that wants
-// app-relative assets resolves before calling.
+// Every filename argument goes through api.h's resolvePath first, exactly as
+// encodePngFile does, so a relative path means what it means to the host's
+// app rather than to the process CWD.
 
 #include "host_image_internal.h"
 
@@ -52,7 +53,7 @@ Value imageDecodeU16(Value, std::span<const Value> args) {
     std::string err;
     bool ok = false;
     if (ev::isString(args[0])) {
-        ok = broimage::decode_file_u16(ev::toUtf8(args[0]), out, &err);
+        ok = broimage::decode_file_u16(resolvePath(ev::toUtf8(args[0])), out, &err);
     } else {
         const uint8_t* p = nullptr;
         size_t n = 0;
@@ -75,7 +76,7 @@ Value imageDecodeF32(Value, std::span<const Value> args) {
     std::string err;
     bool ok = false;
     if (ev::isString(args[0])) {
-        ok = broimage::decode_file_f32(ev::toUtf8(args[0]), out, &err);
+        ok = broimage::decode_file_f32(resolvePath(ev::toUtf8(args[0])), out, &err);
     } else {
         const uint8_t* p = nullptr;
         size_t n = 0;
@@ -97,7 +98,7 @@ Value imageDecodeOriented(Value, std::span<const Value> args) {
     broimage::Image out;
     std::string err;
     if (ev::isString(args[0])) {
-        broimage::decode_file_oriented(ev::toUtf8(args[0]), out, &err);
+        broimage::decode_file_oriented(resolvePath(ev::toUtf8(args[0])), out, &err);
     } else {
         const uint8_t* p = nullptr;
         size_t n = 0;
@@ -136,7 +137,7 @@ Value imageReadExifOrientation(Value, std::span<const Value> args) {
     if (args.empty()) return ev::throwTypeError("readExifOrientation(pathOrBytes)");
     broimage::ExifOrientation o{};
     if (ev::isString(args[0])) {
-        o = broimage::read_exif_orientation_file(ev::toUtf8(args[0]));
+        o = broimage::read_exif_orientation_file(resolvePath(ev::toUtf8(args[0])));
     } else {
         const uint8_t* p = nullptr;
         size_t n = 0;

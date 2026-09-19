@@ -76,7 +76,7 @@ Value transcodeKtx2Value(Value, std::span<const Value> args) {
 
 Value encodePngFileValue(Value, std::span<const Value> a) {
     if (a.size() < 5) return ev::throwTypeError("encodePngFile(path, pixels, w, h, channels, strideBytes?)");
-    std::string path = ev::toUtf8(a[0]);
+    std::string path = resolvePath(ev::toUtf8(a[0]));
     auto info = ev::typedArrayInfo(a[1]);
     if (!info.data) return ev::throwTypeError("encodePngFile: pixels must be a TypedArray");
     int32_t w = static_cast<int32_t>(ev::toDouble(a[2]));
@@ -108,7 +108,7 @@ Value encodePngValue(Value, std::span<const Value> a) {
 
 Value encodeJpegFileValue(Value, std::span<const Value> a) {
     if (a.size() < 5) return ev::throwTypeError("encodeJpegFile(path, pixels, w, h, channels, quality?)");
-    std::string path = ev::toUtf8(a[0]);
+    std::string path = resolvePath(ev::toUtf8(a[0]));
     auto info = ev::typedArrayInfo(a[1]);
     if (!info.data) return ev::throwTypeError("encodeJpegFile: pixels must be a TypedArray");
     int32_t w = static_cast<int32_t>(ev::toDouble(a[2]));

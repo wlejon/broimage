@@ -12,6 +12,10 @@
 // dropped (bro's docs/transition-drift.md row E4).
 void broimageTestRestoredSurface();
 
+// tests/test_image_api_paths.cpp — setPathResolver: the host's resolver is
+// consulted for every filename the file entry points take.
+void broimageTestPathResolver();
+
 int main() {
     namespace ev = bronze::embed;
     using namespace bronze::eval;
@@ -191,6 +195,7 @@ int main() {
     }
 
     broimageTestRestoredSurface();
+    broimageTestPathResolver();
 
     std::cout << "All broimage Bronze JavaScript API tests passed successfully!" << std::endl;
     return 0;

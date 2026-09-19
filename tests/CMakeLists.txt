@@ -29,7 +29,10 @@ if(TARGET brass)
 endif()
 
 if(BROIMAGE_ENABLE_API)
-    add_executable(broimage_test_api test_image_api.cpp test_image_api_restored.cpp)
+    add_executable(broimage_test_api
+        test_image_api.cpp
+        test_image_api_restored.cpp
+        test_image_api_paths.cpp)
     target_include_directories(broimage_test_api PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/api
     )

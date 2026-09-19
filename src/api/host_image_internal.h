@@ -158,6 +158,11 @@ inline Value hostArrayOf(size_t count, const std::function<Value(size_t)>& make)
     return arr.get();
 }
 
+// Path resolution for the file entry points (api.h setPathResolver). Every
+// string path a binding hands to a decoder or an encoder goes through this
+// first, so a relative path means what it means to the host's app.
+std::string resolvePath(const std::string& path);
+
 Value ensureBroImage();
 void installCodecsOnto(Value imageObj);
 void installOpsOnto(Value imageObj);

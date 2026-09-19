@@ -3,6 +3,24 @@
 
 namespace broimage::api {
 
+namespace {
+
+std::function<std::string(const std::string&)>& pathResolverSlot() {
+    static std::function<std::string(const std::string&)> resolver;
+    return resolver;
+}
+
+} // namespace
+
+std::string resolvePath(const std::string& path) {
+    auto& r = pathResolverSlot();
+    return r ? r(path) : path;
+}
+
+void setPathResolver(std::function<std::string(const std::string&)> resolver) {
+    pathResolverSlot() = std::move(resolver);
+}
+
 Value ensureBroImage() {
     Value globalThisVal = ev::undefined();
     auto gt = ev::globalValue("globalThis");

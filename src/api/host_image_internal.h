@@ -136,11 +136,11 @@ inline bool probeScalarKind(Value val, ScalarKind* out) {
 }
 
 inline Value hostArrayOf(size_t count, const std::function<Value(size_t)>& make) {
-    ev::CallResult parsed = ev::parseJson("[]");
-    if (parsed.thrown || !ev::isObject(parsed.value)) {
+    Value created = ev::makeArray(0);
+    if (!ev::isObject(created)) {
         return ev::undefined();
     }
-    ev::Persistent arr(parsed.value);
+    ev::Persistent arr(created);
     if (count == 0) return arr.get();
 
     ev::Persistent push(ev::getProperty(arr.get(), "push"));

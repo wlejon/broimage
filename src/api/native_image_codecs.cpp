@@ -6,6 +6,7 @@
 #endif
 
 #include <cstring>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -13,16 +14,23 @@ namespace broimage::api {
 
 namespace {
 
-bool bytesOf(Value v, std::vector<uint8_t>& out) {
-    ev::TypedArrayInfo info = ev::typedArrayInfo(v);
-    if (!info) return false;
-    out.assign(info.data, info.data + info.byteLength);
-    return true;
+bool bytesOf(Value v, std::span<const uint8_t>& out) {
+    if (auto info = ev::typedArrayInfo(v)) {
+        if (!info.data) return false;
+        out = std::span<const uint8_t>(info.data, info.byteLength);
+        return true;
+    }
+    if (auto ab = ev::arrayBufferInfo(v)) {
+        if (!ab.data) return false;
+        out = std::span<const uint8_t>(ab.data, ab.byteLength);
+        return true;
+    }
+    return false;
 }
 
 Value transcodeKtx2Value(Value, std::span<const Value> args) {
 #if defined(BROIMAGE_HAS_KTX2)
-    std::vector<uint8_t> bytes;
+    std::span<const uint8_t> bytes;
     if (args.empty() || !bytesOf(args[0], bytes)) {
         return ev::throwTypeError("transcodeKTX2 requires (bytes: a typed array)");
     }

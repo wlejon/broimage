@@ -19,12 +19,6 @@ namespace broimage {
 
 namespace {
 
-void set_fallback(Image& out) {
-    out.width = 1;
-    out.height = 1;
-    out.channels = 4;
-    out.pixels = { 255, 255, 255, 255 };
-}
 
 // ---- EXIF orientation reader ----------------------------------------------
 //
@@ -199,7 +193,10 @@ bool decode_file(const std::string& path, Image& out, std::string* error) {
     unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &channels, 4);
     if (!pixels) {
         if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load failed";
-        set_fallback(out);
+        out.width = 0;
+        out.height = 0;
+        out.channels = 0;
+        out.pixels.clear();
         return false;
     }
     out.width = w;
@@ -217,7 +214,10 @@ bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
                                                   &w, &h, &channels, 4);
     if (!pixels) {
         if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load_from_memory failed";
-        set_fallback(out);
+        out.width = 0;
+        out.height = 0;
+        out.channels = 0;
+        out.pixels.clear();
         return false;
     }
     out.width = w;

@@ -150,6 +150,25 @@ int main() {
     broimage::resize_hwc_f32(pattern, 4, 4, 1, ap, 2, 2, broimage::Filter::Area);
     for (float v : ap) CHECK(nearf(v, 2.0f, 1e-5f));
 
+    // Downscale on one axis only (dw < sw, dh == sh):
+    // 4x2 pattern downsampled horizontally to 2x2:
+    const float pat_w[8] = { 0, 4, 0, 4, 4, 0, 4, 0 };
+    float ap_w[4];
+    broimage::resize_hwc_f32(pat_w, 4, 2, 1, ap_w, 2, 2, broimage::Filter::Area);
+    for (float v : ap_w) CHECK(nearf(v, 2.0f, 1e-5f));
+
+    // Downscale on height only (dw == sw, dh < sh):
+    // 2x4 pattern downsampled vertically to 2x2:
+    const float pat_h[8] = { 0, 4, 4, 0, 0, 4, 4, 0 };
+    float ap_h[4];
+    broimage::resize_hwc_f32(pat_h, 2, 4, 1, ap_h, 2, 2, broimage::Filter::Area);
+    for (float v : ap_h) CHECK(nearf(v, 2.0f, 1e-5f));
+
+    // Mixed: downscale X (4 -> 2), upscale Y (2 -> 4)
+    float ap_mixed[8];
+    broimage::resize_hwc_f32(pat_w, 4, 2, 1, ap_mixed, 2, 4, broimage::Filter::Area);
+    for (float v : ap_mixed) CHECK(nearf(v, 2.0f, 1e-5f));
+
     // Area on upscale falls back to bilinear (documented). 2x2 -> 4x4 should
     // match the bilinear result.
     float a_up[16], b_up[16];

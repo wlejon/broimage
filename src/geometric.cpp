@@ -246,61 +246,180 @@ void resize_hwc_f32_lanczos3(const float* src, int sw, int sh, int ch,
 
 // ---- Area / box ------------------------------------------------------------
 //
-// For each dst pixel, average the source pixels overlapped by the projected
-// source rectangle [x*scale_x, (x+1)*scale_x) x [y*scale_y, (y+1)*scale_y),
-// weighted by the fractional overlap on each edge. This is the standard
-// pixel-area filter; it's exact for integer downscale ratios and visibly
-// cleaner than bilinear for non-integer ones. Falls back to bilinear when
-// either axis is an upscale (no area-averaging meaning for the destination
-// being larger than the source on that axis).
+// Separable box/area averaging for minification anti-aliasing.
+// For any downscaled axis (dw < sw or dh < sh), each output pixel averages the
+// continuous source interval it covers, eliminating moiré and aliasing.
+// Any upscaled axis falls back to bilinear interpolation. Pure upscales
+// (dw >= sw && dh >= sh) fall back directly to bilinear.
+
+static void area_downsample_x(const float* src, int sw, int sh, int ch,
+                              float* dst, int dw) {
+    const float scale = static_cast<float>(sw) / static_cast<float>(dw);
+    struct Tap {
+        int start;
+        int count;
+    };
+    std::vector<Tap> taps(dw);
+    std::vector<float> weights;
+    weights.reserve(static_cast<std::size_t>(dw) * (static_cast<std::size_t>(std::ceil(scale)) + 2));
+    std::vector<std::size_t> weight_offsets(dw);
+
+    for (int x = 0; x < dw; ++x) {
+        float x0 = x * scale;
+        float x1 = (x + 1) * scale;
+        if (x == 0) x0 = 0.0f;
+        if (x == dw - 1) x1 = static_cast<float>(sw);
+
+        int ix0 = clampi(static_cast<int>(std::floor(x0)), 0, sw - 1);
+        int ix1 = clampi(static_cast<int>(std::ceil(x1)), 0, sw);
+        if (ix1 <= ix0) ix1 = ix0 + 1;
+
+        taps[x].start = ix0;
+        taps[x].count = ix1 - ix0;
+        weight_offsets[x] = weights.size();
+
+        float wtot = 0.0f;
+        const std::size_t w_start = weights.size();
+        for (int i = ix0; i < ix1; ++i) {
+            float ix0f = std::max(static_cast<float>(i), x0);
+            float ix1f = std::min(static_cast<float>(i + 1), x1);
+            float w = std::max(0.0f, ix1f - ix0f);
+            weights.push_back(w);
+            wtot += w;
+        }
+        if (wtot > 0.0f) {
+            float inv = 1.0f / wtot;
+            for (std::size_t idx = w_start; idx < weights.size(); ++idx) {
+                weights[idx] *= inv;
+            }
+        }
+    }
+
+    for (int y = 0; y < sh; ++y) {
+        const float* srow = src + static_cast<std::size_t>(y) * sw * ch;
+        float* drow = dst + static_cast<std::size_t>(y) * dw * ch;
+        for (int x = 0; x < dw; ++x) {
+            const int start = taps[x].start;
+            const int count = taps[x].count;
+            const float* wptr = weights.data() + weight_offsets[x];
+            float* dp = drow + x * ch;
+            for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
+            for (int k = 0; k < count; ++k) {
+                int sx = clampi(start + k, 0, sw - 1);
+                float w = wptr[k];
+                const float* sp = srow + sx * ch;
+                for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
+            }
+        }
+    }
+}
+
+static void area_downsample_y(const float* src, int w, int sh, int ch,
+                              float* dst, int dh) {
+    const float scale = static_cast<float>(sh) / static_cast<float>(dh);
+    struct Tap {
+        int start;
+        int count;
+    };
+    std::vector<Tap> taps(dh);
+    std::vector<float> weights;
+    weights.reserve(static_cast<std::size_t>(dh) * (static_cast<std::size_t>(std::ceil(scale)) + 2));
+    std::vector<std::size_t> weight_offsets(dh);
+
+    for (int y = 0; y < dh; ++y) {
+        float y0 = y * scale;
+        float y1 = (y + 1) * scale;
+        if (y == 0) y0 = 0.0f;
+        if (y == dh - 1) y1 = static_cast<float>(sh);
+
+        int iy0 = clampi(static_cast<int>(std::floor(y0)), 0, sh - 1);
+        int iy1 = clampi(static_cast<int>(std::ceil(y1)), 0, sh);
+        if (iy1 <= iy0) iy1 = iy0 + 1;
+
+        taps[y].start = iy0;
+        taps[y].count = iy1 - iy0;
+        weight_offsets[y] = weights.size();
+
+        float wtot = 0.0f;
+        const std::size_t w_start = weights.size();
+        for (int j = iy0; j < iy1; ++j) {
+            float jy0 = std::max(static_cast<float>(j), y0);
+            float jy1 = std::min(static_cast<float>(j + 1), y1);
+            float w = std::max(0.0f, jy1 - jy0);
+            weights.push_back(w);
+            wtot += w;
+        }
+        if (wtot > 0.0f) {
+            float inv = 1.0f / wtot;
+            for (std::size_t idx = w_start; idx < weights.size(); ++idx) {
+                weights[idx] *= inv;
+            }
+        }
+    }
+
+    const std::size_t row_floats = static_cast<std::size_t>(w) * ch;
+    for (int y = 0; y < dh; ++y) {
+        const int start = taps[y].start;
+        const int count = taps[y].count;
+        const float* wptr = weights.data() + weight_offsets[y];
+        float* drow = dst + static_cast<std::size_t>(y) * row_floats;
+
+        for (std::size_t i = 0; i < row_floats; ++i) drow[i] = 0.0f;
+
+        for (int k = 0; k < count; ++k) {
+            int sy = clampi(start + k, 0, sh - 1);
+            float w = wptr[k];
+            const float* srow = src + static_cast<std::size_t>(sy) * row_floats;
+            for (std::size_t i = 0; i < row_floats; ++i) {
+                drow[i] += srow[i] * w;
+            }
+        }
+    }
+}
 
 void resize_hwc_f32_area(const float* src, int sw, int sh, int ch,
                          float* dst, int dw, int dh) {
-    if (dw >= sw || dh >= sh) {
-        // Defer to bilinear for any axis that's an upscale; area only makes
-        // sense for reductions. Mixed cases (down on one axis, up on the
-        // other) are uncommon enough that this is a fine simplification.
+    if (dw == sw && dh == sh) {
+        std::memcpy(dst, src, static_cast<std::size_t>(sw) * sh * ch * sizeof(float));
+        return;
+    }
+
+    if (dw >= sw && dh >= sh) {
+        // Pure upsampling or identity: fall back to bilinear
         resize_hwc_f32_bilinear(src, sw, sh, ch, dst, dw, dh);
         return;
     }
-    const float sx = static_cast<float>(sw) / static_cast<float>(dw);
-    const float sy = static_cast<float>(sh) / static_cast<float>(dh);
-    for (int y = 0; y < dh; ++y) {
-        const float y0 = y * sy;
-        const float y1 = y0 + sy;
-        const int   iy0 = static_cast<int>(std::floor(y0));
-        const int   iy1 = static_cast<int>(std::ceil(y1));
-        for (int x = 0; x < dw; ++x) {
-            const float x0 = x * sx;
-            const float x1 = x0 + sx;
-            const int   ix0 = static_cast<int>(std::floor(x0));
-            const int   ix1 = static_cast<int>(std::ceil(x1));
-            float* dp = dst + (y * dw + x) * ch;
-            for (int c = 0; c < ch; ++c) dp[c] = 0.0f;
-            float wtot = 0.0f;
-            for (int j = iy0; j < iy1; ++j) {
-                const float jy0 = std::max(static_cast<float>(j),      y0);
-                const float jy1 = std::min(static_cast<float>(j + 1),  y1);
-                const float wy  = jy1 - jy0;
-                if (wy <= 0.0f) continue;
-                const int sjy = clampi(j, 0, sh - 1);
-                for (int i = ix0; i < ix1; ++i) {
-                    const float ix0f = std::max(static_cast<float>(i),     x0);
-                    const float ix1f = std::min(static_cast<float>(i + 1), x1);
-                    const float wx   = ix1f - ix0f;
-                    if (wx <= 0.0f) continue;
-                    const int six = clampi(i, 0, sw - 1);
-                    const float w = wx * wy;
-                    wtot += w;
-                    const float* sp = src + (sjy * sw + six) * ch;
-                    for (int c = 0; c < ch; ++c) dp[c] += sp[c] * w;
-                }
-            }
-            if (wtot > 0.0f) {
-                const float inv = 1.0f / wtot;
-                for (int c = 0; c < ch; ++c) dp[c] *= inv;
-            }
-        }
+
+    // Minification on at least one axis (dw < sw or dh < sh)
+    if (dw < sw && dh < sh) {
+        std::vector<float> mid(static_cast<std::size_t>(dw) * sh * ch);
+        area_downsample_x(src, sw, sh, ch, mid.data(), dw);
+        area_downsample_y(mid.data(), dw, sh, ch, dst, dh);
+        return;
+    }
+
+    if (dw < sw && dh == sh) {
+        area_downsample_x(src, sw, sh, ch, dst, dw);
+        return;
+    }
+
+    if (dw == sw && dh < sh) {
+        area_downsample_y(src, sw, sh, ch, dst, dh);
+        return;
+    }
+
+    if (dw < sw && dh > sh) {
+        std::vector<float> mid(static_cast<std::size_t>(dw) * sh * ch);
+        area_downsample_x(src, sw, sh, ch, mid.data(), dw);
+        resize_hwc_f32_bilinear(mid.data(), dw, sh, ch, dst, dw, dh);
+        return;
+    }
+
+    if (dw > sw && dh < sh) {
+        std::vector<float> mid(static_cast<std::size_t>(sw) * dh * ch);
+        area_downsample_y(src, sw, sh, ch, mid.data(), dh);
+        resize_hwc_f32_bilinear(mid.data(), sw, dh, ch, dst, dw, dh);
+        return;
     }
 }
 

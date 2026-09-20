@@ -60,14 +60,13 @@ int main() {
     CHECK(img2.width == W && img2.height == H && img2.channels == 4);
     for (size_t i = 0; i < src.size(); ++i) CHECK(img2.pixels[i] == src[i]);
 
-    // Decode failure -> 1x1 white fallback.
+    // Decode failure -> clear output buffer.
     broimage::Image bad;
     std::string bad_err;
     bool ok = broimage::decode_file("does-not-exist-broimage.png", bad, &bad_err);
     CHECK(!ok);
-    CHECK(bad.width == 1 && bad.height == 1);
-    CHECK(bad.pixels.size() == 4);
-    CHECK(bad.pixels[0] == 255 && bad.pixels[3] == 255);
+    CHECK(bad.width == 0 && bad.height == 0);
+    CHECK(bad.pixels.empty());
     CHECK(!bad_err.empty());
 
     // JPEG round trip (lossy — just check decode succeeds, dims match, file exists).

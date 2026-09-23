@@ -47,12 +47,12 @@ Value imageGradient(Value, std::span<const Value> args) {
         if (slen < 4)
             return ev::throwTypeError("gradient: stop must be [t, r, g, b, a?]");
 
-        const Value s = stop.get();
-        double t = ev::toDouble(ev::getElement(s, 0));
-        double r = ev::toDouble(ev::getElement(s, 1));
-        double g = ev::toDouble(ev::getElement(s, 2));
-        double b = ev::toDouble(ev::getElement(s, 3));
-        double a = (slen >= 5) ? ev::toDouble(ev::getElement(s, 4)) : -1.0;
+        // getElement may allocate too, so each read re-reads the root.
+        double t = ev::toDouble(ev::getElement(stop.get(), 0));
+        double r = ev::toDouble(ev::getElement(stop.get(), 1));
+        double g = ev::toDouble(ev::getElement(stop.get(), 2));
+        double b = ev::toDouble(ev::getElement(stop.get(), 3));
+        double a = (slen >= 5) ? ev::toDouble(ev::getElement(stop.get(), 4)) : -1.0;
 
         stops[i].t = static_cast<float>(t);
         stops[i].r = static_cast<float>(r);
@@ -123,6 +123,7 @@ Value imageLookup(Value, std::span<const Value> args) {
     ScalarKind kind{};
     if (!probeScalarKind(args[1], &kind)) return ev::undefined();
 
+    if (!resolveViews({&dst, &src, &lut})) return ev::undefined();
     if (kind.isFloat && src.bytesPerElement == 4) {
         broimage::lookup_f32(
             reinterpret_cast<const float*>(src.data), static_cast<int>(n),
@@ -189,8 +190,10 @@ Value imageReduce(Value, std::span<const Value> args) {
         return readScalar(src.data + i * src.bytesPerElement, src.bytesPerElement, kind.isFloat, kind.isSigned);
     };
 
+    // Each op resolves src after its last option read and before it scans.
     if (op == "minmax") {
         float mn, mx;
+        if (!resolveViews({&src})) return ev::undefined();
         if (f32Path) {
             broimage::MinMax mm = broimage::reduce_minmax_f32(
                 reinterpret_cast<const float*>(src.data),
@@ -211,6 +214,7 @@ Value imageReduce(Value, std::span<const Value> args) {
     }
     if (op == "sum" || op == "mean") {
         double r;
+        if (!resolveViews({&src})) return ev::undefined();
         if (f32Path) {
             r = (op == "sum")
                 ? broimage::reduce_sum_f32(reinterpret_cast<const float*>(src.data), static_cast<int>(n), stride)
@@ -235,6 +239,7 @@ Value imageReduce(Value, std::span<const Value> args) {
         if (hi <= lo) return ev::throwRangeError("histogram: hi must be > lo");
 
         std::vector<uint32_t> counts(static_cast<size_t>(bins), 0);
+        if (!resolveViews({&src})) return ev::undefined();
         if (f32Path) {
             broimage::reduce_histogram_f32(
                 reinterpret_cast<const float*>(src.data), static_cast<int>(n),
@@ -272,34 +277,43 @@ Value imageMap(Value, std::span<const Value> args) {
     if (!getPropStr(args[2], "op", &op)) return ev::undefined();
     if (op.empty()) return ev::throwTypeError("map: opSpec.op required");
 
+    // Every op-specific option is read before src/dst resolve: those reads
+    // allocate, and the resolved pointers must not outlive one.
+    double a = 1, b = 0, e = 1;
+    bool clamp = false;
+    float clo = 0, chi = 0;
+    if (op == "affine") {
+        if (!getPropF64(args[2], "a", &a, 1)) return ev::undefined();
+        if (!getPropF64(args[2], "b", &b, 0)) return ev::undefined();
+        ev::Persistent cv(ev::getProperty(args[2], "clamp"));
+        if (ev::isObject(cv.get())) {
+            clamp = true;
+            clo = static_cast<float>(ev::toDouble(ev::getElement(cv.get(), 0)));
+            chi = static_cast<float>(ev::toDouble(ev::getElement(cv.get(), 1)));
+        }
+    } else if (op == "pow") {
+        if (!getPropF64(args[2], "exp", &e, 1)) return ev::undefined();
+    } else if (op != "abs" && op != "log" && op != "sqrt" && op != "exp") {
+        return ev::throwTypeError("map: unknown op '" + op + "'");
+    }
+
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     const float* sp = reinterpret_cast<const float*>(src.data);
     float* dp = reinterpret_cast<float*>(dst.data);
 
     if (op == "affine") {
-        double a = 1, b = 0;
-        if (!getPropF64(args[2], "a", &a, 1)) return ev::undefined();
-        if (!getPropF64(args[2], "b", &b, 0)) return ev::undefined();
-        Value cv = ev::getProperty(args[2], "clamp");
-        if (ev::isObject(cv)) {
-            float clo = static_cast<float>(ev::toDouble(ev::getElement(cv, 0)));
-            float chi = static_cast<float>(ev::toDouble(ev::getElement(cv, 1)));
+        if (clamp) {
             broimage::map_affine_clamp_f32(sp, dp, n, static_cast<float>(a), static_cast<float>(b), clo, chi);
         } else {
             broimage::map_affine_f32(sp, dp, n, static_cast<float>(a), static_cast<float>(b));
         }
-        return ev::undefined();
     }
-    if (op == "abs")  { broimage::map_abs_f32(sp, dp, n);  return ev::undefined(); }
-    if (op == "log")  { broimage::map_log_f32(sp, dp, n);  return ev::undefined(); }
-    if (op == "sqrt") { broimage::map_sqrt_f32(sp, dp, n); return ev::undefined(); }
-    if (op == "exp")  { broimage::map_exp_f32(sp, dp, n);  return ev::undefined(); }
-    if (op == "pow") {
-        double e = 1;
-        if (!getPropF64(args[2], "exp", &e, 1)) return ev::undefined();
-        broimage::map_pow_f32(sp, dp, n, static_cast<float>(e));
-        return ev::undefined();
-    }
-    return ev::throwTypeError("map: unknown op '" + op + "'");
+    else if (op == "abs")  broimage::map_abs_f32(sp, dp, n);
+    else if (op == "log")  broimage::map_log_f32(sp, dp, n);
+    else if (op == "sqrt") broimage::map_sqrt_f32(sp, dp, n);
+    else if (op == "exp")  broimage::map_exp_f32(sp, dp, n);
+    else                   broimage::map_pow_f32(sp, dp, n, static_cast<float>(e));
+    return ev::undefined();
 }
 
 Value imageCombine(Value, std::span<const Value> args) {
@@ -320,29 +334,30 @@ Value imageCombine(Value, std::span<const Value> args) {
     if (!getPropStr(args[3], "op", &op)) return ev::undefined();
     if (op.empty()) return ev::throwTypeError("combine: opSpec.op required");
 
+    // Op-specific options first; the views resolve after the last read.
+    double t = 0, wa = 1, wb = 1;
+    if (op == "lerp") {
+        if (!getPropF64(args[3], "t", &t, 0)) return ev::undefined();
+    } else if (op == "wsum") {
+        if (!getPropF64(args[3], "wa", &wa, 1)) return ev::undefined();
+        if (!getPropF64(args[3], "wb", &wb, 1)) return ev::undefined();
+    } else if (op != "add" && op != "sub" && op != "mul" && op != "min" && op != "max") {
+        return ev::throwTypeError("combine: unknown op '" + op + "'");
+    }
+
+    if (!resolveViews({&dst, &va, &vb})) return ev::undefined();
     const float* ap = reinterpret_cast<const float*>(va.data);
     const float* bp = reinterpret_cast<const float*>(vb.data);
     float* dp = reinterpret_cast<float*>(dst.data);
 
-    if (op == "add") { broimage::combine_add_f32(ap, bp, dp, n); return ev::undefined(); }
-    if (op == "sub") { broimage::combine_sub_f32(ap, bp, dp, n); return ev::undefined(); }
-    if (op == "mul") { broimage::combine_mul_f32(ap, bp, dp, n); return ev::undefined(); }
-    if (op == "min") { broimage::combine_min_f32(ap, bp, dp, n); return ev::undefined(); }
-    if (op == "max") { broimage::combine_max_f32(ap, bp, dp, n); return ev::undefined(); }
-    if (op == "lerp") {
-        double t = 0;
-        if (!getPropF64(args[3], "t", &t, 0)) return ev::undefined();
-        broimage::combine_lerp_f32(ap, bp, dp, n, static_cast<float>(t));
-        return ev::undefined();
-    }
-    if (op == "wsum") {
-        double wa = 1, wb = 1;
-        if (!getPropF64(args[3], "wa", &wa, 1)) return ev::undefined();
-        if (!getPropF64(args[3], "wb", &wb, 1)) return ev::undefined();
-        broimage::combine_wsum_f32(ap, bp, dp, n, static_cast<float>(wa), static_cast<float>(wb));
-        return ev::undefined();
-    }
-    return ev::throwTypeError("combine: unknown op '" + op + "'");
+    if      (op == "add")  broimage::combine_add_f32(ap, bp, dp, n);
+    else if (op == "sub")  broimage::combine_sub_f32(ap, bp, dp, n);
+    else if (op == "mul")  broimage::combine_mul_f32(ap, bp, dp, n);
+    else if (op == "min")  broimage::combine_min_f32(ap, bp, dp, n);
+    else if (op == "max")  broimage::combine_max_f32(ap, bp, dp, n);
+    else if (op == "lerp") broimage::combine_lerp_f32(ap, bp, dp, n, static_cast<float>(t));
+    else                   broimage::combine_wsum_f32(ap, bp, dp, n, static_cast<float>(wa), static_cast<float>(wb));
+    return ev::undefined();
 }
 
 Value imageStencil(Value, std::span<const Value> args) {
@@ -353,12 +368,13 @@ Value imageStencil(Value, std::span<const Value> args) {
     if (dst.bytesPerElement != 4 || src.bytesPerElement != 4)
         return ev::throwTypeError("stencil: dst and src must be Float32Array");
 
-    Value kdataV = ev::getProperty(args[2], "data");
+    // Rooted: the w/h reads below may allocate and move it.
+    ev::Persistent kdataV(ev::getProperty(args[2], "data"));
     int32_t kw = 0, kh = 0;
     if (!getPropI32(args[2], "w", &kw, 0)) return ev::undefined();
     if (!getPropI32(args[2], "h", &kh, 0)) return ev::undefined();
     TypedArrayView kdata;
-    if (!unpackTypedArray(kdataV, "kernel.data", &kdata)) return ev::undefined();
+    if (!unpackTypedArray(kdataV.get(), "kernel.data", &kdata)) return ev::undefined();
     if (kdata.bytesPerElement != 4) return ev::throwTypeError("stencil: kernel.data must be Float32Array");
     if (kw <= 0 || kh <= 0) return ev::throwRangeError("stencil: kernel w/h must be positive");
     if ((kw & 1) == 0 || (kh & 1) == 0)
@@ -388,6 +404,7 @@ Value imageStencil(Value, std::span<const Value> args) {
     if (!getPropF64(args[3], "divisor", &divisor, 1)) return ev::undefined();
     if (!getPropF64(args[3], "bias",    &bias,    0)) return ev::undefined();
 
+    if (!resolveViews({&dst, &src, &kdata})) return ev::undefined();
     broimage::stencil_f32(
         reinterpret_cast<const float*>(src.data),
         reinterpret_cast<float*>(dst.data),
@@ -426,6 +443,8 @@ Value imageResample(Value, std::span<const Value> args) {
     if      (filter == "nearest")  f = broimage::Filter::Nearest;
     else if (filter == "bilinear") f = broimage::Filter::Bilinear;
     else return ev::throwTypeError("resample: filter must be 'nearest'|'bilinear'");
+
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::resample_f32(
         reinterpret_cast<const float*>(src.data), srcW, srcH,
@@ -469,6 +488,7 @@ Value imageResize(Value, std::span<const Value> args) {
         return ev::throwRangeError("resize: all dimensions and channels must be positive");
 
     broimage::Filter filter = parseFilter(filterStr);
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     if (src.kind == ev::elements::Float32 && dst.kind == ev::elements::Float32) {
         broimage::resize_hwc_f32(reinterpret_cast<const float*>(src.data), srcW, srcH, channels,
@@ -501,6 +521,7 @@ Value imageCrop(Value, std::span<const Value> args) {
 
     if (srcW <= 0 || srcH <= 0 || w <= 0 || h <= 0 || channels <= 0)
         return ev::throwRangeError("crop: invalid dimensions");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::crop_hwc_u8(src.data, srcW, srcH, channels, dst.data, x, y, w, h, srcStride, dstStride);
     return ev::undefined();
@@ -524,6 +545,7 @@ Value imageCenterCrop(Value, std::span<const Value> args) {
 
     if (srcW <= 0 || srcH <= 0 || cropW <= 0 || cropH <= 0 || channels <= 0)
         return ev::throwRangeError("centerCrop: invalid dimensions");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::center_crop_hwc_u8(src.data, srcW, srcH, channels, dst.data, cropW, cropH, srcStride, dstStride);
     return ev::undefined();
@@ -543,6 +565,7 @@ Value imageFlipHorizontal(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "dstStride", &dstStride, 0)) return ev::undefined();
 
     if (w <= 0 || h <= 0 || channels <= 0) return ev::throwRangeError("flipHorizontal: invalid dimensions");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::flip_horizontal_hwc_u8(src.data, dst.data, w, h, channels, srcStride, dstStride);
     return ev::undefined();
@@ -562,6 +585,7 @@ Value imageFlipVertical(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "dstStride", &dstStride, 0)) return ev::undefined();
 
     if (w <= 0 || h <= 0 || channels <= 0) return ev::throwRangeError("flipVertical: invalid dimensions");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::flip_vertical_hwc_u8(src.data, dst.data, w, h, channels, srcStride, dstStride);
     return ev::undefined();
@@ -582,6 +606,7 @@ Value imageRotate90(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "dstStride", &dstStride, 0)) return ev::undefined();
 
     if (srcW <= 0 || srcH <= 0 || channels <= 0) return ev::throwRangeError("rotate90: invalid dimensions");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rotate_90_hwc_u8(src.data, srcW, srcH, channels, dst.data, turns, srcStride, dstStride);
     return ev::undefined();
@@ -612,6 +637,7 @@ Value imagePad(Value, std::span<const Value> args) {
 
     if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0 || channels <= 0)
         return ev::throwRangeError("pad: invalid dimensions");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::pad_hwc_u8(src.data, srcW, srcH, channels, dst.data, dstW, dstH,
                          offX, offY, static_cast<uint8_t>(r), static_cast<uint8_t>(g),
@@ -631,6 +657,7 @@ Value imageRgbaToRgb(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("rgbaToRgb: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgba_to_rgb_u8(src.data, dst.data, count);
     return ev::undefined();
 }
@@ -646,6 +673,7 @@ Value imageRgbToRgba(Value, std::span<const Value> args) {
     if (args.size() >= 4 && !ev::isUndefined(args[3])) {
         alpha = static_cast<int32_t>(ev::toDouble(args[3]));
     }
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgb_to_rgba_u8(src.data, dst.data, count, static_cast<uint8_t>(alpha));
     return ev::undefined();
 }
@@ -657,6 +685,7 @@ Value imageRgbaToGray(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("rgbaToGray: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgba_to_gray_u8(src.data, dst.data, count);
     return ev::undefined();
 }
@@ -668,6 +697,7 @@ Value imageRgbToGray(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("rgbToGray: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgb_to_gray_u8(src.data, dst.data, count);
     return ev::undefined();
 }
@@ -679,6 +709,7 @@ Value imageSrgbToLinear(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("srgbToLinear: count must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     if (src.bytesPerElement == 1 && dst.bytesPerElement == 4) {
         broimage::srgb_to_linear_u8_to_f32(src.data, reinterpret_cast<float*>(dst.data), count);
@@ -696,6 +727,7 @@ Value imageLinearToSrgb(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("linearToSrgb: count must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     if (src.bytesPerElement == 4 && dst.bytesPerElement == 1) {
         broimage::linear_f32_to_srgb_u8(reinterpret_cast<const float*>(src.data), dst.data, count);
@@ -714,6 +746,7 @@ Value imageApplyGamma(Value, std::span<const Value> args) {
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     double gamma = ev::toDouble(args[3]);
     if (count <= 0) return ev::throwRangeError("applyGamma: count must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::apply_gamma_f32(reinterpret_cast<const float*>(src.data),
                               reinterpret_cast<float*>(dst.data),
@@ -728,6 +761,7 @@ Value imageRgbToHsv(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("rgbToHsv: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rgb_to_hsv_f32(reinterpret_cast<const float*>(src.data),
                              reinterpret_cast<float*>(dst.data), count);
@@ -741,6 +775,7 @@ Value imageHsvToRgb(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("hsvToRgb: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::hsv_to_rgb_f32(reinterpret_cast<const float*>(src.data),
                              reinterpret_cast<float*>(dst.data), count);
@@ -754,6 +789,7 @@ Value imageRgbToHsl(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("rgbToHsl: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rgb_to_hsl_f32(reinterpret_cast<const float*>(src.data),
                              reinterpret_cast<float*>(dst.data), count);
@@ -767,6 +803,7 @@ Value imageHslToRgb(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
     int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
     if (count <= 0) return ev::throwRangeError("hslToRgb: pixelCount must be > 0");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::hsl_to_rgb_f32(reinterpret_cast<const float*>(src.data),
                              reinterpret_cast<float*>(dst.data), count);
@@ -807,6 +844,8 @@ Value imageNormalize(Value, std::span<const Value> args) {
         for (int i = 0; i < c; i++) stdBuf[i] = static_cast<float>(ev::toDouble(ev::getElement(args[3], i)));
     }
 
+    if (!resolveViews({&yView, &xView})) return ev::undefined();
+
     broimage::image_normalize_nchw_f32(
         reinterpret_cast<const float*>(xView.data),
         meanBuf.data(), stdBuf.data(),
@@ -832,6 +871,7 @@ Value imageU8ToF32(Value, std::span<const Value> args) {
 
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("u8ToF32: invalid dimensions");
+    if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::u8_nhwc_to_f32_nchw(
         srcView.data, n, h, w, c,
@@ -857,6 +897,7 @@ Value imageF32ToU8(Value, std::span<const Value> args) {
 
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("f32ToU8: invalid dimensions");
+    if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::f32_nchw_to_u8_nhwc(
         reinterpret_cast<const float*>(srcView.data), n, c, h, w,
@@ -879,6 +920,7 @@ Value imageNhwcToNchw(Value, std::span<const Value> args) {
 
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("nhwcToNchw: invalid dimensions");
+    if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::nhwc_to_nchw_f32(
         reinterpret_cast<const float*>(srcView.data), n, h, w, c,
@@ -900,6 +942,7 @@ Value imageNchwToNhwc(Value, std::span<const Value> args) {
 
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("nchwToNhwc: invalid dimensions");
+    if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::nchw_to_nhwc_f32(
         reinterpret_cast<const float*>(srcView.data), n, c, h, w,

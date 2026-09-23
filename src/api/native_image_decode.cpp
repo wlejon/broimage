@@ -169,6 +169,7 @@ Value imageApplyExifOrientation(Value, std::span<const Value> args) {
         px.byteLength < static_cast<size_t>(w) * static_cast<size_t>(h) * 4) {
         return ev::throwRangeError("applyExifOrientation: pixels too small for w*h*4");
     }
+    if (!resolveViews({&px})) return ev::undefined();
 
     broimage::Image img;
     img.width = w;

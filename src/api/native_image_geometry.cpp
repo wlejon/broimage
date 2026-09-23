@@ -85,6 +85,7 @@ Value imageResizeU8(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeU8")) return ev::undefined();
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh, f, ss, ds);
     return ev::undefined();
 }
@@ -105,6 +106,7 @@ Value imageResizeF32(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeF32")) return ev::undefined();
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_hwc_f32(reinterpret_cast<const float*>(src.data), sw, sh, ch,
                              reinterpret_cast<float*>(dst.data), dw, dh, f);
     return ev::undefined();
@@ -126,6 +128,7 @@ Value imageResizeChwF32(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeChwF32")) return ev::undefined();
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_chw_f32(reinterpret_cast<const float*>(src.data), sw, sh, ch,
                              reinterpret_cast<float*>(dst.data), dw, dh, f);
     return ev::undefined();
@@ -153,6 +156,7 @@ Value imageLetterboxU8(Value, std::span<const Value> args) {
         return ev::throwTypeError("letterboxU8: pad must be [r, g, b, a]");
     broimage::Filter f;
     if (!filterOf(args[2], &f, "letterboxU8")) return ev::undefined();
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     int ox = 0, oy = 0, ow = 0, oh = 0;
     broimage::letterbox_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh,
@@ -182,6 +186,7 @@ Value imagePadU8(Value, std::span<const Value> args) {
     float pad[4];
     if (!getPropFloats(args[2], "pad", pad, 4, kOpaqueBlack))
         return ev::throwTypeError("padU8: pad must be [r, g, b, a]");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::pad_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh, ox, oy,
                          static_cast<uint8_t>(pad[0]), static_cast<uint8_t>(pad[1]),
                          static_cast<uint8_t>(pad[2]), static_cast<uint8_t>(pad[3]),
@@ -204,6 +209,7 @@ Value imageCropU8(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0 || w <= 0 || h <= 0)
         return ev::throwRangeError("cropU8: dims/channels/rect must be positive");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::crop_hwc_u8(src.data, sw, sh, ch, dst.data, x, y, w, h, ss, ds);
     return ev::undefined();
@@ -224,6 +230,7 @@ Value imageCenterCropU8(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0 || cw <= 0 || chh <= 0)
         return ev::throwRangeError("centerCropU8: dims/channels/crop must be positive");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::center_crop_hwc_u8(src.data, sw, sh, ch, dst.data, cw, chh, ss, ds);
     return ev::undefined();
@@ -247,6 +254,7 @@ Value flipU8(std::span<const Value> args, bool horizontal) {
     if (w <= 0 || h <= 0 || ch <= 0)
         return ev::throwRangeError(std::string(who) + ": dims/channels must be positive");
 
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     if (horizontal) {
         broimage::flip_horizontal_hwc_u8(src.data, dst.data, w, h, ch, ss, ds);
     } else {
@@ -269,6 +277,7 @@ Value imageRotate90U8(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0)
         return ev::throwRangeError("rotate90U8: dims/channels must be positive");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rotate_90_hwc_u8(src.data, sw, sh, ch, dst.data, turns, ss, ds);
     return ev::undefined();
@@ -285,6 +294,7 @@ Value premultiply(std::span<const Value> args, bool forward) {
     const int n = static_cast<int>(src.byteLength / 4);
     if (dst.byteLength < static_cast<size_t>(n) * 4)
         return ev::throwRangeError(std::string(who) + ": dst too small");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     if (forward) {
         broimage::premultiply_alpha_rgba8(src.data, dst.data, n);
     } else {
@@ -310,6 +320,7 @@ Value imageResizeRgba8Alpha(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeRgba8Alpha")) return ev::undefined();
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_rgba8_alpha(src.data, sw, sh, dst.data, dw, dh, f);
     return ev::undefined();
 }
@@ -333,6 +344,7 @@ Value imageLetterboxRgba8Alpha(Value, std::span<const Value> args) {
         return ev::throwTypeError("letterboxRgba8Alpha: pad must be [r, g, b, a]");
     broimage::Filter f;
     if (!filterOf(args[2], &f, "letterboxRgba8Alpha")) return ev::undefined();
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     int ox = 0, oy = 0, ow = 0, oh = 0;
     broimage::letterbox_rgba8_alpha(src.data, sw, sh, dst.data, dw, dh,

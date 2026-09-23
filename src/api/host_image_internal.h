@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <span>
 #include <string>
 #include <vector>
@@ -18,11 +19,23 @@ namespace ev = bronze::embed;
 using Value = bronze::Value;
 using ElementKind = bronze::ElementKind;
 
+// A typed-array argument, split into what survives a collection and what does
+// not (embed.h, THE POINTER CONTRACT). The shape — byte length, element size,
+// kind — is validated once, by unpackTypedArray, and stays true. The bytes
+// live in the moving heap: any allocating embed call (a getProperty on an
+// options object, a throw, a fromUtf8, a createTypedArray) may relocate them.
+// So unpackTypedArray roots the value and leaves `data` null, and a native
+// fills `data` with resolveViews AFTER its last allocating call and right
+// before the kernel runs. A native that forgets reads a null pointer and
+// faults on the first run, rather than reading a stale one only under GC
+// pressure.
 struct TypedArrayView {
     uint8_t* data = nullptr;
     size_t byteLength = 0;
     size_t bytesPerElement = 0;
     ElementKind kind{};
+    const char* name = "";
+    ev::Persistent root;
 };
 
 inline bool unpackTypedArray(Value val, const char* name, TypedArrayView* out) {
@@ -31,10 +44,30 @@ inline bool unpackTypedArray(Value val, const char* name, TypedArrayView* out) {
         ev::throwTypeError(std::string(name) + " must be a TypedArray");
         return false;
     }
-    out->data = info.data;
+    out->data = nullptr;
     out->byteLength = info.byteLength;
     out->bytesPerElement = info.bytesPerElement;
     out->kind = info.elementKind;
+    out->name = name;
+    out->root.set(val);
+    return true;
+}
+
+// Re-read each view's `data` from its rooted value. Call it once the native
+// has made its last allocating embed call, immediately before the kernel, and
+// make no allocating call between this and the last use of `data`. Answers
+// false (with a TypeError pending) when a view no longer spans the bytes it
+// was validated with — an options getter can detach or shrink a buffer.
+inline bool resolveViews(std::initializer_list<TypedArrayView*> views) {
+    for (TypedArrayView* v : views) {
+        auto info = ev::typedArrayInfo(v->root.get());
+        if (!info.data || info.byteLength < v->byteLength) {
+            for (TypedArrayView* w : views) w->data = nullptr;
+            ev::throwTypeError(std::string(v->name) + " was detached or shrunk during the call");
+            return false;
+        }
+        v->data = info.data;
+    }
     return true;
 }
 
@@ -88,24 +121,25 @@ inline bool getPropStr(Value obj, const char* key, std::string* out, const std::
 // Returns false when the property is present but not `n` numbers long.
 inline bool getPropFloats(Value obj, const char* key, float* out, int n,
                           const float* defVal) {
-    Value v = ev::getProperty(obj, key);
-    if (ev::isUndefined(v) || ev::isNull(v)) {
+    // Rooted: the "length" read and each getElement may allocate and move it.
+    ev::Persistent v(ev::getProperty(obj, key));
+    if (ev::isUndefined(v.get()) || ev::isNull(v.get())) {
         if (!defVal) return false;
         for (int i = 0; i < n; ++i) out[i] = defVal[i];
         return true;
     }
-    if (!ev::isObject(v)) return false;
-    auto info = ev::typedArrayInfo(v);
+    if (!ev::isObject(v.get())) return false;
+    auto info = ev::typedArrayInfo(v.get());
     if (info.data && info.elementKind == ev::elements::Float32) {
         if (info.byteLength < static_cast<size_t>(n) * sizeof(float)) return false;
         const float* src = reinterpret_cast<const float*>(info.data);
         for (int i = 0; i < n; ++i) out[i] = src[i];
         return true;
     }
-    Value lenV = ev::getProperty(v, "length");
+    Value lenV = ev::getProperty(v.get(), "length");
     if (!ev::isNumber(lenV) || static_cast<int>(ev::toDouble(lenV)) < n) return false;
     for (int i = 0; i < n; ++i) {
-        out[i] = static_cast<float>(ev::toDouble(ev::getElement(v, static_cast<uint32_t>(i))));
+        out[i] = static_cast<float>(ev::toDouble(ev::getElement(v.get(), static_cast<uint32_t>(i))));
     }
     return true;
 }

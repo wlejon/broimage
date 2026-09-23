@@ -68,6 +68,7 @@ Value shuffleHwcChw(std::span<const Value> args, bool toChw) {
     if (src.byteLength < need || dst.byteLength < need)
         return ev::throwRangeError(std::string(who) + ": buffers too small for w*h*channels");
 
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     if (toChw) {
         broimage::hwc_to_chw_f32(reinterpret_cast<const float*>(src.data),
                                  reinterpret_cast<float*>(dst.data), w, h, c);
@@ -89,6 +90,7 @@ Value imageSrgbToLinearU8ToF32(Value, std::span<const Value> args) {
     const int n = static_cast<int>(src.byteLength);
     if (dst.byteLength < static_cast<size_t>(n) * sizeof(float))
         return ev::throwRangeError("srgbToLinearU8ToF32: dst too small");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::srgb_to_linear_u8_to_f32(src.data, reinterpret_cast<float*>(dst.data), n);
     return ev::undefined();
 }
@@ -102,6 +104,7 @@ Value imageLinearF32ToSrgbU8(Value, std::span<const Value> args) {
     const int n = static_cast<int>(src.byteLength / sizeof(float));
     if (dst.byteLength < static_cast<size_t>(n))
         return ev::throwRangeError("linearF32ToSrgbU8: dst too small");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::linear_f32_to_srgb_u8(reinterpret_cast<const float*>(src.data), dst.data, n);
     return ev::undefined();
 }
@@ -132,6 +135,7 @@ Value colorMatrix(std::span<const Value> args, bool is3x4) {
     if (dst.byteLength < static_cast<size_t>(n) * ch * sizeof(float))
         return ev::throwRangeError(std::string(who) + ": dst too small");
 
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     if (is3x4) {
         broimage::apply_color_matrix_3x4_f32(reinterpret_cast<const float*>(src.data),
                                              reinterpret_cast<float*>(dst.data), n, ch, m);
@@ -165,6 +169,7 @@ Value imageU8NhwcToF32Nchw(Value, std::span<const Value> args) {
     const size_t need = static_cast<size_t>(n) * c * h * w;
     if (dst.byteLength < need * sizeof(float))
         return ev::throwRangeError("u8NhwcToF32Nchw: dst too small");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::u8_nhwc_to_f32_nchw(src.data, n, h, w, c, static_cast<float>(scale),
                                   static_cast<float>(bias),
@@ -191,6 +196,7 @@ Value imageF32NchwToU8Nhwc(Value, std::span<const Value> args) {
         return ev::throwRangeError("f32NchwToU8Nhwc: N/C/H/W must be positive");
     if (dst.byteLength < static_cast<size_t>(n) * h * w * c)
         return ev::throwRangeError("f32NchwToU8Nhwc: dst too small");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::f32_nchw_to_u8_nhwc(reinterpret_cast<const float*>(src.data), n, c, h, w,
                                   static_cast<float>(scale), static_cast<float>(bias),
@@ -217,6 +223,7 @@ Value shuffleBatched(std::span<const Value> args, bool toNchw) {
     if (dst.byteLength < need)
         return ev::throwRangeError(std::string(who) + ": dst too small");
 
+    if (!resolveViews({&dst, &src})) return ev::undefined();
     if (toNchw) {
         broimage::nhwc_to_nchw_f32(reinterpret_cast<const float*>(src.data), n, h, w, c,
                                    reinterpret_cast<float*>(dst.data));
@@ -254,6 +261,7 @@ Value imageNormalizeNchw(Value, std::span<const Value> args) {
     const size_t need = static_cast<size_t>(n) * c * h * w * sizeof(float);
     if (src.byteLength < need || dst.byteLength < need)
         return ev::throwRangeError("normalizeNchw: buffers too small for N*C*H*W");
+    if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::image_normalize_nchw_f32(reinterpret_cast<const float*>(src.data),
                                        mean.data(), stdv.data(), n, c, h, w,
@@ -308,6 +316,7 @@ Value imageStencilHwc(Value, std::span<const Value> args) {
         !getPropF64(args[3], "bias", &bias, 0.0))
         return ev::undefined();
 
+    if (!resolveViews({&dst, &src, &kdata})) return ev::undefined();
     broimage::stencil_hwc_f32(reinterpret_cast<const float*>(src.data),
                               reinterpret_cast<float*>(dst.data), sw, sh, ch,
                               reinterpret_cast<const float*>(kdata.data), kw, kh,
@@ -336,6 +345,7 @@ Value imageFeatherWindow(Value, std::span<const Value> args) {
         return ev::throwRangeError("featherWindow: tw/th must be positive");
     if (win.byteLength < static_cast<size_t>(tw) * th * sizeof(float))
         return ev::throwRangeError("featherWindow: win too small for tw*th");
+    if (!resolveViews({&win})) return ev::undefined();
 
     broimage::feather_window_f32(reinterpret_cast<float*>(win.data), tw, th,
                                  ovL, ovR, ovT, ovB);
@@ -370,6 +380,7 @@ Value imageAccumulateTile(Value, std::span<const Value> args) {
     if (tile.byteLength < static_cast<size_t>(tw) * th * ch * sizeof(float) ||
         window.byteLength < static_cast<size_t>(tw) * th * sizeof(float))
         return ev::throwRangeError("accumulateTile: tile/window too small for tw*th");
+    if (!resolveViews({&acc, &wacc, &tile, &window})) return ev::undefined();
 
     broimage::accumulate_tile_f32(reinterpret_cast<float*>(acc.data),
                                   reinterpret_cast<float*>(wacc.data), fw, fh, ch,
@@ -400,6 +411,7 @@ Value imageNormalizeAccumulator(Value, std::span<const Value> args) {
     if (acc.byteLength < static_cast<size_t>(np) * ch * sizeof(float) ||
         wacc.byteLength < static_cast<size_t>(np) * sizeof(float))
         return ev::throwRangeError("normalizeAccumulator: buffers too small for nPixels");
+    if (!resolveViews({&acc, &wacc})) return ev::undefined();
 
     broimage::normalize_accumulator_f32(reinterpret_cast<float*>(acc.data),
                                         reinterpret_cast<const float*>(wacc.data),

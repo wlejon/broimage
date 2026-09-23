@@ -5,6 +5,8 @@
 #include <broimage/ktx2.h>
 #endif
 
+#include <climits>
+#include <cmath>
 #include <cstring>
 #include <span>
 #include <string>
@@ -82,67 +84,88 @@ Value transcodeKtx2Value(Value, std::span<const Value> args) {
 #endif
 }
 
+// The shared argument shape of the four encoders: pixels, w, h, channels and
+// one optional trailing integer (PNG row stride, JPEG quality), starting at
+// a[first]. The pixel view is checked against what the encoder will read —
+// h rows of the stride (or w*channels) bytes — and left unresolved; the
+// caller resolves it after its last allocating call.
+struct EncodeArgs {
+    TypedArrayView px;
+    int32_t w = 0, h = 0, c = 0, extra = 0;
+};
+
+bool readEncodeArgs(std::span<const Value> a, size_t first, const char* who, bool extraIsStride,
+                    int32_t extraDefault, EncodeArgs* out) {
+    if (!unpackTypedArray(a[first], "pixels", &out->px)) return false;
+    if (out->px.bytesPerElement != 1) {
+        ev::throwTypeError(std::string(who) + ": pixels must be a Uint8Array");
+        return false;
+    }
+    if (!countArg(a[first + 1], who, "width", &out->w) ||
+        !countArg(a[first + 2], who, "height", &out->h) ||
+        !countArg(a[first + 3], who, "channels", &out->c))
+        return false;
+    if (out->c > 4) {
+        ev::throwRangeError(std::string(who) + ": channels must be 1 to 4");
+        return false;
+    }
+    out->extra = extraDefault;
+    if (a.size() > first + 4 && !ev::isUndefined(a[first + 4])) {
+        if (!ev::isNumber(a[first + 4])) {
+            ev::throwTypeError(std::string(who) + (extraIsStride ? ": strideBytes" : ": quality") +
+                               " must be a number");
+            return false;
+        }
+        const double d = std::trunc(ev::toDouble(a[first + 4]));
+        if (!(d >= 0 && d <= static_cast<double>(INT32_MAX))) {
+            ev::throwRangeError(std::string(who) + (extraIsStride ? ": strideBytes" : ": quality") +
+                                " is out of range");
+            return false;
+        }
+        out->extra = static_cast<int32_t>(d);
+    }
+    return requireImage(out->px, out->w, out->h, out->c, extraIsStride ? out->extra : 0, 1, who);
+}
+
 Value encodePngFileValue(Value, std::span<const Value> a) {
     if (a.size() < 5) return ev::throwTypeError("encodePngFile(path, pixels, w, h, channels, strideBytes?)");
+    if (!ev::isString(a[0])) return ev::throwTypeError("encodePngFile: path must be a string");
+    EncodeArgs e;
+    if (!readEncodeArgs(a, 1, "encodePngFile", true, 0, &e)) return ev::undefined();
     std::string path = resolvePath(ev::toUtf8(a[0]));
-    auto info = ev::typedArrayInfo(a[1]);
-    if (!info.data) return ev::throwTypeError("encodePngFile: pixels must be a TypedArray");
-    int32_t w = static_cast<int32_t>(ev::toDouble(a[2]));
-    int32_t h = static_cast<int32_t>(ev::toDouble(a[3]));
-    int32_t c = static_cast<int32_t>(ev::toDouble(a[4]));
-    int32_t stride = 0;
-    if (a.size() >= 6 && !ev::isUndefined(a[5])) {
-        stride = static_cast<int32_t>(ev::toDouble(a[5]));
-    }
-    bool ok = broimage::encode_png_file(path, info.data, w, h, c, stride);
+    if (!resolveViews({&e.px})) return ev::undefined();
+    bool ok = broimage::encode_png_file(path, e.px.data, e.w, e.h, e.c, e.extra);
     return ev::fromBool(ok);
 }
 
 Value encodePngValue(Value, std::span<const Value> a) {
     if (a.size() < 4) return ev::throwTypeError("encodePng(pixels, w, h, channels, strideBytes?)");
-    auto info = ev::typedArrayInfo(a[0]);
-    if (!info.data) return ev::throwTypeError("encodePng: pixels must be a TypedArray");
-    int32_t w = static_cast<int32_t>(ev::toDouble(a[1]));
-    int32_t h = static_cast<int32_t>(ev::toDouble(a[2]));
-    int32_t c = static_cast<int32_t>(ev::toDouble(a[3]));
-    int32_t stride = 0;
-    if (a.size() >= 5 && !ev::isUndefined(a[4])) {
-        stride = static_cast<int32_t>(ev::toDouble(a[4]));
-    }
+    EncodeArgs e;
+    if (!readEncodeArgs(a, 0, "encodePng", true, 0, &e)) return ev::undefined();
+    if (!resolveViews({&e.px})) return ev::undefined();
     std::vector<uint8_t> out;
-    if (!broimage::encode_png_memory(out, info.data, w, h, c, stride)) return ev::null();
+    if (!broimage::encode_png_memory(out, e.px.data, e.w, e.h, e.c, e.extra)) return ev::null();
     return typedArrayFrom(ev::elements::Uint8, out.data(), out.size(), static_cast<uint32_t>(out.size()));
 }
 
 Value encodeJpegFileValue(Value, std::span<const Value> a) {
     if (a.size() < 5) return ev::throwTypeError("encodeJpegFile(path, pixels, w, h, channels, quality?)");
+    if (!ev::isString(a[0])) return ev::throwTypeError("encodeJpegFile: path must be a string");
+    EncodeArgs e;
+    if (!readEncodeArgs(a, 1, "encodeJpegFile", false, 90, &e)) return ev::undefined();
     std::string path = resolvePath(ev::toUtf8(a[0]));
-    auto info = ev::typedArrayInfo(a[1]);
-    if (!info.data) return ev::throwTypeError("encodeJpegFile: pixels must be a TypedArray");
-    int32_t w = static_cast<int32_t>(ev::toDouble(a[2]));
-    int32_t h = static_cast<int32_t>(ev::toDouble(a[3]));
-    int32_t c = static_cast<int32_t>(ev::toDouble(a[4]));
-    int32_t quality = 90;
-    if (a.size() >= 6 && !ev::isUndefined(a[5])) {
-        quality = static_cast<int32_t>(ev::toDouble(a[5]));
-    }
-    bool ok = broimage::encode_jpeg_file(path, info.data, w, h, c, quality);
+    if (!resolveViews({&e.px})) return ev::undefined();
+    bool ok = broimage::encode_jpeg_file(path, e.px.data, e.w, e.h, e.c, e.extra);
     return ev::fromBool(ok);
 }
 
 Value encodeJpegValue(Value, std::span<const Value> a) {
     if (a.size() < 4) return ev::throwTypeError("encodeJpeg(pixels, w, h, channels, quality?)");
-    auto info = ev::typedArrayInfo(a[0]);
-    if (!info.data) return ev::throwTypeError("encodeJpeg: pixels must be a TypedArray");
-    int32_t w = static_cast<int32_t>(ev::toDouble(a[1]));
-    int32_t h = static_cast<int32_t>(ev::toDouble(a[2]));
-    int32_t c = static_cast<int32_t>(ev::toDouble(a[3]));
-    int32_t quality = 90;
-    if (a.size() >= 5 && !ev::isUndefined(a[4])) {
-        quality = static_cast<int32_t>(ev::toDouble(a[4]));
-    }
+    EncodeArgs e;
+    if (!readEncodeArgs(a, 0, "encodeJpeg", false, 90, &e)) return ev::undefined();
+    if (!resolveViews({&e.px})) return ev::undefined();
     std::vector<uint8_t> out;
-    if (!broimage::encode_jpeg_memory(out, info.data, w, h, c, quality)) return ev::null();
+    if (!broimage::encode_jpeg_memory(out, e.px.data, e.w, e.h, e.c, e.extra)) return ev::null();
     return typedArrayFrom(ev::elements::Uint8, out.data(), out.size(), static_cast<uint32_t>(out.size()));
 }
 

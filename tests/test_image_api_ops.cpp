@@ -205,6 +205,76 @@ void broimageTestOpsSurface() {
             eq(nhwc, [1, 2, 3, 4], "nchwToNhwc");
         }
 
+        // ── validation: every kernel refuses a buffer shorter than its dims ──
+        {
+            const throwsName = (fn, name, what) => {
+                let err = null;
+                try { fn(); } catch (e) { err = e; }
+                if (!err) fail(what + " did not throw");
+                if (err.name !== name) fail(what + " threw " + err.name + ": " + err.message);
+            };
+            const u8 = (n) => new Uint8Array(n), f32 = (n) => new Float32Array(n);
+
+            // normalize: mean/std shorter than C, and short Y/X.
+            const X = f32(6), Y = f32(6);
+            throwsName(() => I.normalize(Y, X, [0, 0], [1, 1, 1], 1, 3, 1, 2), "TypeError", "normalize short mean");
+            throwsName(() => I.normalize(Y, X, f32(3), f32(2), 1, 3, 1, 2), "TypeError", "normalize short std f32");
+            throwsName(() => I.normalize(f32(5), X, [0, 0, 0], [1, 1, 1], 1, 3, 1, 2), "RangeError", "normalize short Y");
+            throwsName(() => I.normalize(Y, new Int32Array(6), [0, 0, 0], [1, 1, 1], 1, 3, 1, 2), "TypeError", "normalize int X");
+            throwsName(() => I.normalize(Y, X, [0, 0, 0], [1, 1, 1], 1, 0, 1, 2), "RangeError", "normalize C=0");
+            I.normalize(Y, X, f32(3), new Float32Array([1, 1, 1]), 1, 3, 1, 2);
+
+            // geometry, untyped and typed spellings, with and without strides.
+            throwsName(() => I.resize(u8(15), u8(16), { srcW: 2, srcH: 2, dstW: 2, dstH: 2 }), "RangeError", "resize short dst");
+            throwsName(() => I.resize(f32(16), f32(15), { srcW: 2, srcH: 2, dstW: 2, dstH: 2 }), "RangeError", "resize short f32 src");
+            throwsName(() => I.resizeU8(u8(16), u8(16), { srcW: 2, srcH: 2, dstW: 2, dstH: 2, srcStride: 12 }), "RangeError", "resizeU8 stride past end");
+            throwsName(() => I.resizeU8(u8(16), u8(16), { srcW: 2, srcH: 2, dstW: 2, dstH: 2, srcStride: 4 }), "RangeError", "resizeU8 stride shorter than a row");
+            I.resizeU8(u8(16), u8(20), { srcW: 2, srcH: 2, dstW: 2, dstH: 2, srcStride: 12 });
+            throwsName(() => I.crop(u8(3), u8(16), { srcW: 2, srcH: 2, x: 0, y: 0, w: 1, h: 1 }), "RangeError", "crop short dst");
+            throwsName(() => I.cropU8(u8(4), u8(15), { srcW: 2, srcH: 2, x: 0, y: 0, w: 1, h: 1 }), "RangeError", "cropU8 short src");
+            throwsName(() => I.centerCrop(u8(15), u8(64), { srcW: 4, srcH: 4, cropW: 2, cropH: 2 }), "RangeError", "centerCrop short dst");
+            throwsName(() => I.flipHorizontal(u8(15), u8(16), { w: 2, h: 2 }), "RangeError", "flipHorizontal short dst");
+            throwsName(() => I.flipVerticalU8(u8(16), u8(15), { w: 2, h: 2 }), "RangeError", "flipVerticalU8 short src");
+            throwsName(() => I.rotate90(u8(23), u8(24), { srcW: 3, srcH: 2, turns: 1 }), "RangeError", "rotate90 short dst");
+            I.rotate90(u8(24), u8(24), { srcW: 3, srcH: 2, turns: 1 });
+            throwsName(() => I.pad(u8(35), u8(16), { srcW: 2, srcH: 2, dstW: 3, dstH: 3 }), "RangeError", "pad short dst");
+            throwsName(() => I.padU8(u8(36), u8(15), { srcW: 2, srcH: 2, dstW: 3, dstH: 3 }), "RangeError", "padU8 short src");
+            throwsName(() => I.letterboxU8(u8(15), u8(16), { srcW: 2, srcH: 2, dstW: 2, dstH: 2 }), "RangeError", "letterboxU8 short dst");
+            throwsName(() => I.resizeRgba8Alpha(u8(16), u8(15), { srcW: 2, srcH: 2, dstW: 2, dstH: 2 }), "RangeError", "resizeRgba8Alpha short src");
+            throwsName(() => I.resizeF32(f32(4), new Int32Array(4), { srcW: 2, srcH: 2, dstW: 2, dstH: 2 }), "TypeError", "resizeF32 int src");
+
+            // colour converters take their count from the argument, so the
+            // buffers are checked against it.
+            throwsName(() => I.rgbaToRgb(u8(5), u8(8), 2), "RangeError", "rgbaToRgb short dst");
+            throwsName(() => I.rgbToRgba(u8(8), u8(5), 2), "RangeError", "rgbToRgba short src");
+            throwsName(() => I.rgbaToGray(u8(1), u8(8), 2), "RangeError", "rgbaToGray short dst");
+            throwsName(() => I.rgbToGray(u8(2), u8(5), 2), "RangeError", "rgbToGray short src");
+            throwsName(() => I.srgbToLinear(f32(3), f32(4), 4), "RangeError", "srgbToLinear short dst");
+            throwsName(() => I.srgbToLinear(f32(4), u8(3), 4), "RangeError", "srgbToLinear u8 short src");
+            throwsName(() => I.linearToSrgb(u8(3), f32(4), 4), "RangeError", "linearToSrgb u8 short dst");
+            throwsName(() => I.applyGamma(f32(4), f32(4), 5, 2.2), "RangeError", "applyGamma count past end");
+            throwsName(() => I.rgbToHsv(f32(6), f32(5), 2), "RangeError", "rgbToHsv short src");
+            throwsName(() => I.hslToRgb(f32(5), f32(6), 2), "RangeError", "hslToRgb short dst");
+            throwsName(() => I.rgbaToRgb(u8(3), u8(4), 0), "RangeError", "rgbaToRgb zero count");
+
+            // layout
+            throwsName(() => I.u8ToF32(f32(4), u8(3), { h: 1, w: 4, c: 1 }), "RangeError", "u8ToF32 short src");
+            throwsName(() => I.f32ToU8(u8(3), f32(4), { c: 1, h: 1, w: 4 }), "RangeError", "f32ToU8 short dst");
+            throwsName(() => I.nhwcToNchw(f32(4), f32(3), { h: 1, w: 2, c: 2 }), "RangeError", "nhwcToNchw short src");
+            throwsName(() => I.nchwToNhwcF32(f32(4), f32(3), { C: 2, H: 1, W: 2 }), "RangeError", "nchwToNhwcF32 short src");
+            throwsName(() => I.u8NhwcToF32Nchw(f32(4), u8(3), { H: 1, W: 4, C: 1 }), "RangeError", "u8NhwcToF32Nchw short src");
+
+            // encoders read h rows of w*channels bytes.
+            throwsName(() => I.encodePng(u8(15), 2, 2, 4), "RangeError", "encodePng short pixels");
+            throwsName(() => I.encodeJpeg(u8(11), 2, 2, 3, 90), "RangeError", "encodeJpeg short pixels");
+            throwsName(() => I.encodePng(u8(16), 2, 2, 5), "RangeError", "encodePng 5 channels");
+            throwsName(() => I.applyExifOrientation(u8(15), 2, 2, 6), "RangeError", "applyExifOrientation short pixels");
+
+            // options of the wrong type throw instead of silently doing nothing.
+            throwsName(() => I.crop(u8(4), u8(16), { srcW: "2", srcH: 2, w: 1, h: 1 }), "TypeError", "crop string srcW");
+            throwsName(() => I.crop(u8(4), u8(16), { srcW: 1e12, srcH: 2, w: 1, h: 1 }), "RangeError", "crop huge srcW");
+        }
+
         "SUCCESS";
     )JS";
 

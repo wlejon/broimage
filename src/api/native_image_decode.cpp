@@ -162,13 +162,16 @@ Value imageApplyExifOrientation(Value, std::span<const Value> args) {
     if (px.bytesPerElement != 1) {
         return ev::throwTypeError("applyExifOrientation: pixels must be a Uint8Array (RGBA8)");
     }
-    const int32_t w = static_cast<int32_t>(ev::toDouble(args[1]));
-    const int32_t h = static_cast<int32_t>(ev::toDouble(args[2]));
-    const int32_t orient = static_cast<int32_t>(ev::toDouble(args[3]));
-    if (w <= 0 || h <= 0 ||
-        px.byteLength < static_cast<size_t>(w) * static_cast<size_t>(h) * 4) {
-        return ev::throwRangeError("applyExifOrientation: pixels too small for w*h*4");
-    }
+    int32_t w = 0, h = 0;
+    if (!countArg(args[1], "applyExifOrientation", "width", &w) ||
+        !countArg(args[2], "applyExifOrientation", "height", &h))
+        return ev::undefined();
+    if (!ev::isNumber(args[3]))
+        return ev::throwTypeError("applyExifOrientation: orient must be a number");
+    const double od = ev::toDouble(args[3]);
+    // EXIF orientations are 1..8; anything else is left as-is (Normal).
+    const int32_t orient = (od >= 1 && od <= 8) ? static_cast<int32_t>(od) : 1;
+    if (!requireImage(px, w, h, 4, 0, 1, "applyExifOrientation")) return ev::undefined();
     if (!resolveViews({&px})) return ev::undefined();
 
     broimage::Image img;

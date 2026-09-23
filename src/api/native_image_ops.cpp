@@ -17,6 +17,21 @@ namespace broimage::api {
 
 namespace {
 
+// A (dst, src, count) converter: `count` from the positional argument, then
+// both views checked against what the kernel reads and writes — `srcPer`
+// elements per unit of src and `dstPer` of dst, float32 elements where the
+// flag says so (which also requires a Float32Array), bytes otherwise.
+bool countedPair(const TypedArrayView& dst, const TypedArrayView& src, Value countV,
+                 const char* who, bool dstF32, uint64_t dstPer, bool srcF32, uint64_t srcPer,
+                 int32_t* count) {
+    if (!countArg(countV, who, "count", count)) return false;
+    auto check = [&](const TypedArrayView& v, bool f32, uint64_t per) {
+        if (f32 && !requireFloat32(v, who)) return false;
+        return requireBytes(v, static_cast<uint64_t>(*count) * per * (f32 ? 4 : 1), who);
+    };
+    return check(src, srcF32, srcPer) && check(dst, dstF32, dstPer);
+}
+
 // ---------------------------------------------------------------------------
 // 1. Kernel Operations
 // ---------------------------------------------------------------------------
@@ -80,6 +95,8 @@ Value imageAlloc(Value, std::span<const Value> args) {
 
     std::string dtype = reader.getString(3, "float32");
     size_t count = static_cast<size_t>(w) * static_cast<size_t>(h) * static_cast<size_t>(channels);
+    if (count > static_cast<size_t>(INT32_MAX))
+        return ev::throwRangeError("alloc: w*h*channels is too large");
     ElementKind kind;
     if (dtype == "float32")      { kind = ev::elements::Float32;      }
     else if (dtype == "float64") { kind = ev::elements::Float64;      }
@@ -488,9 +505,18 @@ Value imageResize(Value, std::span<const Value> args) {
         return ev::throwRangeError("resize: all dimensions and channels must be positive");
 
     broimage::Filter filter = parseFilter(filterStr);
+    const bool f32 = src.kind == ev::elements::Float32 && dst.kind == ev::elements::Float32;
+    if (f32) {
+        if (!requireImage(src, srcW, srcH, channels, 0, 4, "resize") ||
+            !requireImage(dst, dstW, dstH, channels, 0, 4, "resize"))
+            return ev::undefined();
+    } else if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "resize") ||
+               !requireImage(dst, dstW, dstH, channels, dstStride, 1, "resize")) {
+        return ev::undefined();
+    }
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
-    if (src.kind == ev::elements::Float32 && dst.kind == ev::elements::Float32) {
+    if (f32) {
         broimage::resize_hwc_f32(reinterpret_cast<const float*>(src.data), srcW, srcH, channels,
                                  reinterpret_cast<float*>(dst.data), dstW, dstH, filter);
     } else {
@@ -521,6 +547,9 @@ Value imageCrop(Value, std::span<const Value> args) {
 
     if (srcW <= 0 || srcH <= 0 || w <= 0 || h <= 0 || channels <= 0)
         return ev::throwRangeError("crop: invalid dimensions");
+    if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "crop") ||
+        !requireImage(dst, w, h, channels, dstStride, 1, "crop"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::crop_hwc_u8(src.data, srcW, srcH, channels, dst.data, x, y, w, h, srcStride, dstStride);
@@ -545,6 +574,9 @@ Value imageCenterCrop(Value, std::span<const Value> args) {
 
     if (srcW <= 0 || srcH <= 0 || cropW <= 0 || cropH <= 0 || channels <= 0)
         return ev::throwRangeError("centerCrop: invalid dimensions");
+    if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "centerCrop") ||
+        !requireImage(dst, cropW, cropH, channels, dstStride, 1, "centerCrop"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::center_crop_hwc_u8(src.data, srcW, srcH, channels, dst.data, cropW, cropH, srcStride, dstStride);
@@ -565,6 +597,9 @@ Value imageFlipHorizontal(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "dstStride", &dstStride, 0)) return ev::undefined();
 
     if (w <= 0 || h <= 0 || channels <= 0) return ev::throwRangeError("flipHorizontal: invalid dimensions");
+    if (!requireImage(src, w, h, channels, srcStride, 1, "flipHorizontal") ||
+        !requireImage(dst, w, h, channels, dstStride, 1, "flipHorizontal"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::flip_horizontal_hwc_u8(src.data, dst.data, w, h, channels, srcStride, dstStride);
@@ -585,6 +620,9 @@ Value imageFlipVertical(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "dstStride", &dstStride, 0)) return ev::undefined();
 
     if (w <= 0 || h <= 0 || channels <= 0) return ev::throwRangeError("flipVertical: invalid dimensions");
+    if (!requireImage(src, w, h, channels, srcStride, 1, "flipVertical") ||
+        !requireImage(dst, w, h, channels, dstStride, 1, "flipVertical"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::flip_vertical_hwc_u8(src.data, dst.data, w, h, channels, srcStride, dstStride);
@@ -606,6 +644,10 @@ Value imageRotate90(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "dstStride", &dstStride, 0)) return ev::undefined();
 
     if (srcW <= 0 || srcH <= 0 || channels <= 0) return ev::throwRangeError("rotate90: invalid dimensions");
+    const bool odd = (((turns % 4) + 4) % 4) % 2 == 1;
+    if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "rotate90") ||
+        !requireImage(dst, odd ? srcH : srcW, odd ? srcW : srcH, channels, dstStride, 1, "rotate90"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rotate_90_hwc_u8(src.data, srcW, srcH, channels, dst.data, turns, srcStride, dstStride);
@@ -637,6 +679,9 @@ Value imagePad(Value, std::span<const Value> args) {
 
     if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0 || channels <= 0)
         return ev::throwRangeError("pad: invalid dimensions");
+    if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "pad") ||
+        !requireImage(dst, dstW, dstH, channels, dstStride, 1, "pad"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::pad_hwc_u8(src.data, srcW, srcH, channels, dst.data, dstW, dstH,
@@ -655,8 +700,8 @@ Value imageRgbaToRgb(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("rgbaToRgb: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "rgbaToRgb", false, 3, false, 4, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgba_to_rgb_u8(src.data, dst.data, count);
     return ev::undefined();
@@ -667,11 +712,13 @@ Value imageRgbToRgba(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("rgbToRgba: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "rgbToRgba", false, 4, false, 3, &count)) return ev::undefined();
     int32_t alpha = 255;
     if (args.size() >= 4 && !ev::isUndefined(args[3])) {
-        alpha = static_cast<int32_t>(ev::toDouble(args[3]));
+        if (!ev::isNumber(args[3])) return ev::throwTypeError("rgbToRgba: alpha must be a number");
+        const double a = ev::toDouble(args[3]);
+        alpha = a >= 255 ? 255 : a > 0 ? static_cast<int32_t>(a) : 0;
     }
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgb_to_rgba_u8(src.data, dst.data, count, static_cast<uint8_t>(alpha));
@@ -683,8 +730,8 @@ Value imageRgbaToGray(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("rgbaToGray: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "rgbaToGray", false, 1, false, 4, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgba_to_gray_u8(src.data, dst.data, count);
     return ev::undefined();
@@ -695,8 +742,8 @@ Value imageRgbToGray(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("rgbToGray: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "rgbToGray", false, 1, false, 3, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::rgb_to_gray_u8(src.data, dst.data, count);
     return ev::undefined();
@@ -707,11 +754,13 @@ Value imageSrgbToLinear(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("srgbToLinear: count must be > 0");
+    const bool fromBytes = src.bytesPerElement == 1 && dst.bytesPerElement == 4;
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "srgbToLinear", true, 1, !fromBytes, 1, &count))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
-    if (src.bytesPerElement == 1 && dst.bytesPerElement == 4) {
+    if (fromBytes) {
         broimage::srgb_to_linear_u8_to_f32(src.data, reinterpret_cast<float*>(dst.data), count);
     } else {
         broimage::srgb_to_linear_f32(reinterpret_cast<const float*>(src.data),
@@ -725,11 +774,13 @@ Value imageLinearToSrgb(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("linearToSrgb: count must be > 0");
+    const bool toBytes = src.bytesPerElement == 4 && dst.bytesPerElement == 1;
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "linearToSrgb", !toBytes, 1, true, 1, &count))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
-    if (src.bytesPerElement == 4 && dst.bytesPerElement == 1) {
+    if (toBytes) {
         broimage::linear_f32_to_srgb_u8(reinterpret_cast<const float*>(src.data), dst.data, count);
     } else {
         broimage::linear_to_srgb_f32(reinterpret_cast<const float*>(src.data),
@@ -743,9 +794,10 @@ Value imageApplyGamma(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "applyGamma", true, 1, true, 1, &count)) return ev::undefined();
+    if (!ev::isNumber(args[3])) return ev::throwTypeError("applyGamma: gamma must be a number");
     double gamma = ev::toDouble(args[3]);
-    if (count <= 0) return ev::throwRangeError("applyGamma: count must be > 0");
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::apply_gamma_f32(reinterpret_cast<const float*>(src.data),
@@ -759,8 +811,8 @@ Value imageRgbToHsv(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("rgbToHsv: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "rgbToHsv", true, 3, true, 3, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rgb_to_hsv_f32(reinterpret_cast<const float*>(src.data),
@@ -773,8 +825,8 @@ Value imageHsvToRgb(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("hsvToRgb: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "hsvToRgb", true, 3, true, 3, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::hsv_to_rgb_f32(reinterpret_cast<const float*>(src.data),
@@ -787,8 +839,8 @@ Value imageRgbToHsl(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("rgbToHsl: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "rgbToHsl", true, 3, true, 3, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rgb_to_hsl_f32(reinterpret_cast<const float*>(src.data),
@@ -801,8 +853,8 @@ Value imageHslToRgb(Value, std::span<const Value> args) {
     TypedArrayView dst, src;
     if (!unpackTypedArray(args[0], "dst", &dst)) return ev::undefined();
     if (!unpackTypedArray(args[1], "src", &src)) return ev::undefined();
-    int32_t count = static_cast<int32_t>(ev::toDouble(args[2]));
-    if (count <= 0) return ev::throwRangeError("hslToRgb: pixelCount must be > 0");
+    int32_t count = 0;
+    if (!countedPair(dst, src, args[2], "hslToRgb", true, 3, true, 3, &count)) return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::hsl_to_rgb_f32(reinterpret_cast<const float*>(src.data),
@@ -820,29 +872,24 @@ Value imageNormalize(Value, std::span<const Value> args) {
     if (!unpackTypedArray(args[0], "Y", &yView)) return ev::undefined();
     if (!unpackTypedArray(args[1], "X", &xView)) return ev::undefined();
 
-    int32_t n = static_cast<int32_t>(ev::toDouble(args[4]));
-    int32_t c = static_cast<int32_t>(ev::toDouble(args[5]));
-    int32_t h = static_cast<int32_t>(ev::toDouble(args[6]));
-    int32_t w = static_cast<int32_t>(ev::toDouble(args[7]));
-    if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
-        return ev::throwRangeError("normalize: dimensions must be positive");
+    int32_t n = 0, c = 0, h = 0, w = 0;
+    if (!countArg(args[4], "normalize", "N", &n) || !countArg(args[5], "normalize", "C", &c) ||
+        !countArg(args[6], "normalize", "H", &h) || !countArg(args[7], "normalize", "W", &w))
+        return ev::undefined();
 
+    if (!requireFloat32(yView, "normalize") || !requireFloat32(xView, "normalize"))
+        return ev::undefined();
+    const uint64_t need = static_cast<uint64_t>(n) * c * h * w * sizeof(float);
+    if (!requireBytes(yView, need, "normalize") || !requireBytes(xView, need, "normalize"))
+        return ev::undefined();
+
+    // mean/std must each carry C numbers; a short array used to be read past
+    // its end (a Float32Array by memcpy, a JS array as NaN).
     std::vector<float> meanBuf(static_cast<size_t>(c));
     std::vector<float> stdBuf(static_cast<size_t>(c));
-
-    auto meanInfo = ev::typedArrayInfo(args[2]);
-    if (meanInfo.data && meanInfo.elementKind == ev::elements::Float32) {
-        std::memcpy(meanBuf.data(), meanInfo.data, static_cast<size_t>(c) * sizeof(float));
-    } else {
-        for (int i = 0; i < c; i++) meanBuf[i] = static_cast<float>(ev::toDouble(ev::getElement(args[2], i)));
-    }
-
-    auto stdInfo = ev::typedArrayInfo(args[3]);
-    if (stdInfo.data && stdInfo.elementKind == ev::elements::Float32) {
-        std::memcpy(stdBuf.data(), stdInfo.data, static_cast<size_t>(c) * sizeof(float));
-    } else {
-        for (int i = 0; i < c; i++) stdBuf[i] = static_cast<float>(ev::toDouble(ev::getElement(args[3], i)));
-    }
+    if (!readFloatArray(args[2], meanBuf.data(), c, "normalize: mean") ||
+        !readFloatArray(args[3], stdBuf.data(), c, "normalize: std"))
+        return ev::undefined();
 
     if (!resolveViews({&yView, &xView})) return ev::undefined();
 
@@ -871,6 +918,10 @@ Value imageU8ToF32(Value, std::span<const Value> args) {
 
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("u8ToF32: invalid dimensions");
+    const uint64_t elems = static_cast<uint64_t>(n) * h * w * c;
+    if (!requireFloat32(yView, "u8ToF32") || !requireBytes(yView, elems * 4, "u8ToF32") ||
+        !requireBytes(srcView, elems, "u8ToF32"))
+        return ev::undefined();
     if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::u8_nhwc_to_f32_nchw(
@@ -897,6 +948,10 @@ Value imageF32ToU8(Value, std::span<const Value> args) {
 
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("f32ToU8: invalid dimensions");
+    const uint64_t elems = static_cast<uint64_t>(n) * c * h * w;
+    if (!requireFloat32(srcView, "f32ToU8") || !requireBytes(srcView, elems * 4, "f32ToU8") ||
+        !requireBytes(yView, elems, "f32ToU8"))
+        return ev::undefined();
     if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::f32_nchw_to_u8_nhwc(
@@ -920,6 +975,10 @@ Value imageNhwcToNchw(Value, std::span<const Value> args) {
 
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("nhwcToNchw: invalid dimensions");
+    const uint64_t need = static_cast<uint64_t>(n) * h * w * c * 4;
+    if (!requireFloat32(yView, "nhwcToNchw") || !requireFloat32(srcView, "nhwcToNchw") ||
+        !requireBytes(yView, need, "nhwcToNchw") || !requireBytes(srcView, need, "nhwcToNchw"))
+        return ev::undefined();
     if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::nhwc_to_nchw_f32(
@@ -942,6 +1001,10 @@ Value imageNchwToNhwc(Value, std::span<const Value> args) {
 
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("nchwToNhwc: invalid dimensions");
+    const uint64_t need = static_cast<uint64_t>(n) * c * h * w * 4;
+    if (!requireFloat32(yView, "nchwToNhwc") || !requireFloat32(srcView, "nchwToNhwc") ||
+        !requireBytes(yView, need, "nchwToNhwc") || !requireBytes(srcView, need, "nchwToNhwc"))
+        return ev::undefined();
     if (!resolveViews({&yView, &srcView})) return ev::undefined();
 
     broimage::nchw_to_nhwc_f32(

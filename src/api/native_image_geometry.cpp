@@ -57,7 +57,8 @@ bool pairU8(Value a, Value b, const char* who, TypedArrayView* dst,
             TypedArrayView* src, size_t bpe) {
     if (!unpackTypedArray(a, "dst", dst)) return false;
     if (!unpackTypedArray(b, "src", src)) return false;
-    if (dst->bytesPerElement != bpe || src->bytesPerElement != bpe) {
+    if (dst->bytesPerElement != bpe || src->bytesPerElement != bpe ||
+        (bpe == 4 && (dst->kind != ev::elements::Float32 || src->kind != ev::elements::Float32))) {
         ev::throwTypeError(std::string(who) + (bpe == 1
             ? ": dst/src must be Uint8Array" : ": dst/src must be Float32Array"));
         return false;
@@ -85,6 +86,9 @@ Value imageResizeU8(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeU8")) return ev::undefined();
+    if (!requireImage(src, sw, sh, ch, ss, 1, "resizeU8") ||
+        !requireImage(dst, dw, dh, ch, ds, 1, "resizeU8"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh, f, ss, ds);
     return ev::undefined();
@@ -106,6 +110,9 @@ Value imageResizeF32(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeF32")) return ev::undefined();
+    if (!requireImage(src, sw, sh, ch, 0, 4, "resizeF32") ||
+        !requireImage(dst, dw, dh, ch, 0, 4, "resizeF32"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_hwc_f32(reinterpret_cast<const float*>(src.data), sw, sh, ch,
                              reinterpret_cast<float*>(dst.data), dw, dh, f);
@@ -128,6 +135,9 @@ Value imageResizeChwF32(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeChwF32")) return ev::undefined();
+    if (!requireImage(src, sw, sh, ch, 0, 4, "resizeChwF32") ||
+        !requireImage(dst, dw, dh, ch, 0, 4, "resizeChwF32"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_chw_f32(reinterpret_cast<const float*>(src.data), sw, sh, ch,
                              reinterpret_cast<float*>(dst.data), dw, dh, f);
@@ -156,6 +166,9 @@ Value imageLetterboxU8(Value, std::span<const Value> args) {
         return ev::throwTypeError("letterboxU8: pad must be [r, g, b, a]");
     broimage::Filter f;
     if (!filterOf(args[2], &f, "letterboxU8")) return ev::undefined();
+    if (!requireImage(src, sw, sh, ch, 0, 1, "letterboxU8") ||
+        !requireImage(dst, dw, dh, ch, 0, 1, "letterboxU8"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     int ox = 0, oy = 0, ow = 0, oh = 0;
@@ -186,6 +199,9 @@ Value imagePadU8(Value, std::span<const Value> args) {
     float pad[4];
     if (!getPropFloats(args[2], "pad", pad, 4, kOpaqueBlack))
         return ev::throwTypeError("padU8: pad must be [r, g, b, a]");
+    if (!requireImage(src, sw, sh, ch, ss, 1, "padU8") ||
+        !requireImage(dst, dw, dh, ch, ds, 1, "padU8"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::pad_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh, ox, oy,
                          static_cast<uint8_t>(pad[0]), static_cast<uint8_t>(pad[1]),
@@ -209,6 +225,9 @@ Value imageCropU8(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0 || w <= 0 || h <= 0)
         return ev::throwRangeError("cropU8: dims/channels/rect must be positive");
+    if (!requireImage(src, sw, sh, ch, ss, 1, "cropU8") ||
+        !requireImage(dst, w, h, ch, ds, 1, "cropU8"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::crop_hwc_u8(src.data, sw, sh, ch, dst.data, x, y, w, h, ss, ds);
@@ -230,6 +249,9 @@ Value imageCenterCropU8(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0 || cw <= 0 || chh <= 0)
         return ev::throwRangeError("centerCropU8: dims/channels/crop must be positive");
+    if (!requireImage(src, sw, sh, ch, ss, 1, "centerCropU8") ||
+        !requireImage(dst, cw, chh, ch, ds, 1, "centerCropU8"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::center_crop_hwc_u8(src.data, sw, sh, ch, dst.data, cw, chh, ss, ds);
@@ -253,6 +275,8 @@ Value flipU8(std::span<const Value> args, bool horizontal) {
         return ev::undefined();
     if (w <= 0 || h <= 0 || ch <= 0)
         return ev::throwRangeError(std::string(who) + ": dims/channels must be positive");
+    if (!requireImage(src, w, h, ch, ss, 1, who) || !requireImage(dst, w, h, ch, ds, 1, who))
+        return ev::undefined();
 
     if (!resolveViews({&dst, &src})) return ev::undefined();
     if (horizontal) {
@@ -277,6 +301,10 @@ Value imageRotate90U8(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0)
         return ev::throwRangeError("rotate90U8: dims/channels must be positive");
+    const bool odd = (((turns % 4) + 4) % 4) % 2 == 1;
+    if (!requireImage(src, sw, sh, ch, ss, 1, "rotate90U8") ||
+        !requireImage(dst, odd ? sh : sw, odd ? sw : sh, ch, ds, 1, "rotate90U8"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::rotate_90_hwc_u8(src.data, sw, sh, ch, dst.data, turns, ss, ds);
@@ -320,6 +348,9 @@ Value imageResizeRgba8Alpha(Value, std::span<const Value> args) {
 
     broimage::Filter f;
     if (!filterOf(args[2], &f, "resizeRgba8Alpha")) return ev::undefined();
+    if (!requireImage(src, sw, sh, 4, 0, 1, "resizeRgba8Alpha") ||
+        !requireImage(dst, dw, dh, 4, 0, 1, "resizeRgba8Alpha"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::resize_rgba8_alpha(src.data, sw, sh, dst.data, dw, dh, f);
     return ev::undefined();
@@ -344,6 +375,9 @@ Value imageLetterboxRgba8Alpha(Value, std::span<const Value> args) {
         return ev::throwTypeError("letterboxRgba8Alpha: pad must be [r, g, b, a]");
     broimage::Filter f;
     if (!filterOf(args[2], &f, "letterboxRgba8Alpha")) return ev::undefined();
+    if (!requireImage(src, sw, sh, 4, 0, 1, "letterboxRgba8Alpha") ||
+        !requireImage(dst, dw, dh, 4, 0, 1, "letterboxRgba8Alpha"))
+        return ev::undefined();
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     int ox = 0, oy = 0, ow = 0, oh = 0;

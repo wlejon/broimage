@@ -35,12 +35,12 @@ bool pairOf(Value a, Value b, const char* who, TypedArrayView* dst,
             TypedArrayView* src, size_t dstBpe, size_t srcBpe) {
     if (!unpackTypedArray(a, "dst", dst)) return false;
     if (!unpackTypedArray(b, "src", src)) return false;
-    if (dst->bytesPerElement != dstBpe) {
+    if (dst->bytesPerElement != dstBpe || (dstBpe == 4 && dst->kind != ev::elements::Float32)) {
         ev::throwTypeError(std::string(who) + (dstBpe == 1
             ? ": dst must be a Uint8Array" : ": dst must be a Float32Array"));
         return false;
     }
-    if (src->bytesPerElement != srcBpe) {
+    if (src->bytesPerElement != srcBpe || (srcBpe == 4 && src->kind != ev::elements::Float32)) {
         ev::throwTypeError(std::string(who) + (srcBpe == 1
             ? ": src must be a Uint8Array" : ": src must be a Float32Array"));
         return false;
@@ -169,6 +169,8 @@ Value imageU8NhwcToF32Nchw(Value, std::span<const Value> args) {
     const size_t need = static_cast<size_t>(n) * c * h * w;
     if (dst.byteLength < need * sizeof(float))
         return ev::throwRangeError("u8NhwcToF32Nchw: dst too small");
+    if (src.byteLength < need)
+        return ev::throwRangeError("u8NhwcToF32Nchw: src too small");
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::u8_nhwc_to_f32_nchw(src.data, n, h, w, c, static_cast<float>(scale),
@@ -196,6 +198,8 @@ Value imageF32NchwToU8Nhwc(Value, std::span<const Value> args) {
         return ev::throwRangeError("f32NchwToU8Nhwc: N/C/H/W must be positive");
     if (dst.byteLength < static_cast<size_t>(n) * h * w * c)
         return ev::throwRangeError("f32NchwToU8Nhwc: dst too small");
+    if (src.byteLength < static_cast<size_t>(n) * h * w * c * sizeof(float))
+        return ev::throwRangeError("f32NchwToU8Nhwc: src too small");
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::f32_nchw_to_u8_nhwc(reinterpret_cast<const float*>(src.data), n, c, h, w,
@@ -222,6 +226,8 @@ Value shuffleBatched(std::span<const Value> args, bool toNchw) {
     const size_t need = static_cast<size_t>(n) * c * h * w * sizeof(float);
     if (dst.byteLength < need)
         return ev::throwRangeError(std::string(who) + ": dst too small");
+    if (src.byteLength < need)
+        return ev::throwRangeError(std::string(who) + ": src too small");
 
     if (!resolveViews({&dst, &src})) return ev::undefined();
     if (toNchw) {

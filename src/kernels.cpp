@@ -18,6 +18,12 @@ void gradient(const GradientStop* stops, int stop_count, int n,
     auto alpha_of = [](const GradientStop& s) {
         return (s.a < 0.0f) ? 255.0f : s.a;
     };
+    // std::clamp passes NaN through, and casting NaN to uint8_t is undefined:
+    // a non-finite channel (a NaN stop colour or NaN stop t) reads as 0.
+    auto to_byte = [](float v) {
+        return std::isfinite(v) ? static_cast<uint8_t>(std::clamp(v, 0.0f, 255.0f))
+                                : uint8_t{0};
+    };
 
     int cur = 0;
     for (int i = 0; i < n; ++i) {
@@ -27,10 +33,10 @@ void gradient(const GradientStop* stops, int stop_count, int n,
         // Clamp to endpoints outside the explicit stop range.
         if (t >= stops[stop_count - 1].t) {
             const GradientStop& last = stops[stop_count - 1];
-            out[i * 4 + 0] = static_cast<uint8_t>(std::clamp(last.r, 0.0f, 255.0f));
-            out[i * 4 + 1] = static_cast<uint8_t>(std::clamp(last.g, 0.0f, 255.0f));
-            out[i * 4 + 2] = static_cast<uint8_t>(std::clamp(last.b, 0.0f, 255.0f));
-            out[i * 4 + 3] = static_cast<uint8_t>(std::clamp(alpha_of(last), 0.0f, 255.0f));
+            out[i * 4 + 0] = to_byte(last.r);
+            out[i * 4 + 1] = to_byte(last.g);
+            out[i * 4 + 2] = to_byte(last.b);
+            out[i * 4 + 3] = to_byte(alpha_of(last));
             continue;
         }
 
@@ -47,10 +53,10 @@ void gradient(const GradientStop* stops, int stop_count, int n,
         const float g = s0.g + (s1.g - s0.g) * u;
         const float b = s0.b + (s1.b - s0.b) * u;
         const float a = a0    + (a1    - a0)    * u;
-        out[i * 4 + 0] = static_cast<uint8_t>(std::clamp(r, 0.0f, 255.0f));
-        out[i * 4 + 1] = static_cast<uint8_t>(std::clamp(g, 0.0f, 255.0f));
-        out[i * 4 + 2] = static_cast<uint8_t>(std::clamp(b, 0.0f, 255.0f));
-        out[i * 4 + 3] = static_cast<uint8_t>(std::clamp(a, 0.0f, 255.0f));
+        out[i * 4 + 0] = to_byte(r);
+        out[i * 4 + 1] = to_byte(g);
+        out[i * 4 + 2] = to_byte(b);
+        out[i * 4 + 3] = to_byte(a);
     }
 }
 

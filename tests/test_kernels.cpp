@@ -78,6 +78,22 @@ int main() {
     CHECK(bins[2] == 1);
     CHECK(bins[3] == 0);
 
+    // NaN and out-of-int-range samples are dropped, not converted.
+    const float wild[4] = { NAN, INFINITY, -INFINITY, 3e38f };
+    uint32_t wild_bins[4] = {0};
+    broimage::reduce_histogram_f32(wild, 4, 4, 0.0f, 4.0f, wild_bins);
+    CHECK(wild_bins[0] == 0 && wild_bins[1] == 0 && wild_bins[2] == 0 && wild_bins[3] == 0);
+
+    // A NaN sample (clamp), and NaN / infinite ones in wrap mode, index LUT
+    // entry 0 rather than INT_MIN.
+    const float nan_src[3] = { NAN, INFINITY, -INFINITY };
+    uint8_t nan_dst[3 * 4];
+    broimage::lookup_f32(nan_src, 1, lut.data(), 256, nan_dst, 0.0f, 1.0f);
+    CHECK(nan_dst[0] == lut[0] && nan_dst[3] == lut[3]);
+    broimage::lookup_f32(nan_src, 3, lut.data(), 256, nan_dst, 0.0f, 1.0f,
+                         broimage::LookupEdge::Wrap);
+    for (int i = 0; i < 3; ++i) CHECK(nan_dst[i * 4] == lut[0]);
+
     // ----- map ---------------------------------------------------------------
     float vs[4] = { -2, -1, 0, 1 };
     float out[4];

@@ -69,12 +69,18 @@ void lookup_f32(const float* src, int n_pixels,
         const float t  = (src[i] - lo) * inv_span;
         float       fi = t * idx_max;
         int idx;
+        // NaN (a NaN sample, or an infinite one in wrap mode) converted to
+        // int is undefined behaviour, and in practice INT_MIN: an index far
+        // outside the LUT. It maps to entry 0.
+        if (!(fi == fi)) fi = 0.0f;
         if (wrap) {
             const float lf = static_cast<float>(lut_n);
             fi = std::fmod(fi, lf);
+            if (!(fi == fi)) fi = 0.0f;  // fmod(inf, n)
             if (fi < 0.0f) fi += lf;
             idx = static_cast<int>(fi);
             if (idx >= lut_n) idx = lut_n - 1;
+            if (idx < 0) idx = 0;
         } else {
             if (fi < 0.0f) fi = 0.0f;
             if (fi > idx_max) fi = idx_max;
@@ -126,7 +132,12 @@ void reduce_histogram_f32(const float* src, int n,
     const float inv_span = 1.0f / (hi - lo);
     for (int i = 0; i < n; i += stride) {
         const float t = (src[i] - lo) * inv_span;
-        const int idx = static_cast<int>(t * static_cast<float>(bins));
+        const float fi = t * static_cast<float>(bins);
+        // Range-check as a float: NaN, and values past int range, would be
+        // undefined behaviour to convert. (-1, 0) still truncates into bin 0,
+        // as it always has.
+        if (!(fi > -1.0f) || !(fi < static_cast<float>(bins))) continue;
+        const int idx = static_cast<int>(fi);
         if (idx < 0 || idx >= bins) continue;
         out_counts[idx]++;
     }

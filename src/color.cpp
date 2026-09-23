@@ -131,6 +131,7 @@ inline void rgb_to_hsv_one(float r, float g, float b,
 inline void hsv_to_rgb_one(float h, float s, float v,
                            float& r, float& g, float& b) {
     if (s <= 0.0f) { r = g = b = v; return; }
+    if (!std::isfinite(h)) h = 0.0f;  // the int conversion below needs a number
     h = h - std::floor(h); // wrap into [0, 1)
     const float hh = h * 6.0f;
     const int   i  = static_cast<int>(std::floor(hh));

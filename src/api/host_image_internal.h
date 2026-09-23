@@ -85,6 +85,18 @@ inline Value typedArrayFrom(ElementKind kind, const void* data, size_t byteLengt
 // RangeError, never an out-of-bounds read or write. The kernels index with
 // int, so a span past INT32_MAX is refused too.
 
+// The product of script-supplied sizes, saturating at UINT64_MAX rather than
+// wrapping: four int32 dimensions multiply past 2^64, and a product that
+// wrapped to something small used to pass requireBytes.
+inline uint64_t satMul(std::initializer_list<uint64_t> factors) {
+    uint64_t p = 1;
+    for (uint64_t f : factors) {
+        if (f != 0 && p > UINT64_MAX / f) return UINT64_MAX;
+        p *= f;
+    }
+    return p;
+}
+
 inline bool requireBytes(const TypedArrayView& v, uint64_t need, const char* who) {
     if (need > static_cast<uint64_t>(INT32_MAX)) {
         ev::throwRangeError(std::string(who) + ": " + v.name + " dimensions are too large");
@@ -105,14 +117,20 @@ inline bool requireBytes(const TypedArrayView& v, uint64_t need, const char* who
 // shorter than a row, is refused.
 inline bool requireImage(const TypedArrayView& v, int w, int h, int channels, int strideBytes,
                          size_t bpe, const char* who) {
-    const uint64_t row = static_cast<uint64_t>(w) * static_cast<uint64_t>(channels) * bpe;
+    if (w < 0 || h < 0 || channels < 0) {
+        ev::throwRangeError(std::string(who) + ": " + v.name + " dimensions must not be negative");
+        return false;
+    }
+    if (w == 0 || h == 0 || channels == 0) return requireBytes(v, 0, who);
+    const uint64_t row = satMul({static_cast<uint64_t>(w), static_cast<uint64_t>(channels), bpe});
     if (strideBytes < 0 || (strideBytes > 0 && static_cast<uint64_t>(strideBytes) < row)) {
         ev::throwRangeError(std::string(who) + ": " + v.name +
                             " stride must be 0 or at least width*channels bytes");
         return false;
     }
     const uint64_t pitch = strideBytes > 0 ? static_cast<uint64_t>(strideBytes) : row;
-    return requireBytes(v, pitch * static_cast<uint64_t>(h - 1) + row, who);
+    const uint64_t body = satMul({pitch, static_cast<uint64_t>(h - 1)});
+    return requireBytes(v, body > UINT64_MAX - row ? UINT64_MAX : body + row, who);
 }
 
 inline bool requireFloat32(const TypedArrayView& v, const char* who) {
@@ -249,11 +267,19 @@ inline bool getPropFloats(Value obj, const char* key, float* out, int n,
         return true;
     }
     Value lenV = ev::getProperty(v.get(), "length");
-    if (!ev::isNumber(lenV) || static_cast<int>(ev::toDouble(lenV)) < n) return false;
+    if (!ev::isNumber(lenV) || !(ev::toDouble(lenV) >= n)) return false;
     for (int i = 0; i < n; ++i) {
         out[i] = static_cast<float>(ev::toDouble(ev::getElement(v.get(), static_cast<uint32_t>(i))));
     }
     return true;
+}
+
+// A script-supplied color component as a byte: clamped to [0, 255], NaN as 0.
+// A raw float-to-uint8 cast of NaN or anything outside [0, 256) is undefined.
+inline uint8_t clampByte(float v) {
+    if (!(v > 0.0f)) return 0;
+    if (v >= 255.0f) return 255;
+    return static_cast<uint8_t>(v);
 }
 
 inline float readScalar(const uint8_t* p, size_t bpe, bool isFloat, bool isSigned) {

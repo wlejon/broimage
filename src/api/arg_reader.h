@@ -21,16 +21,28 @@ inline double numAt(std::span<const Value> args, size_t i) {
     return std::isnan(d) ? 0.0 : d;
 }
 
+// Integer reads saturate at the type's range (NaN is 0, via numAt): a raw
+// cast of an out-of-range double is undefined behaviour, and a wrapped count
+// could pass a size check a saturated one fails.
 inline int32_t i32At(std::span<const Value> args, size_t i) {
-    return static_cast<int32_t>(static_cast<int64_t>(numAt(args, i)));
+    const double d = numAt(args, i);
+    if (d >= 2147483647.0) return INT32_MAX;
+    if (d <= -2147483648.0) return INT32_MIN;
+    return static_cast<int32_t>(d);
 }
 
 inline uint32_t u32At(std::span<const Value> args, size_t i) {
-    return static_cast<uint32_t>(static_cast<int64_t>(numAt(args, i)));
+    const double d = numAt(args, i);
+    if (d >= 4294967295.0) return UINT32_MAX;
+    if (!(d > 0)) return 0;
+    return static_cast<uint32_t>(d);
 }
 
 inline int64_t i64At(std::span<const Value> args, size_t i) {
-    return static_cast<int64_t>(numAt(args, i));
+    const double d = numAt(args, i);
+    if (d >= 9223372036854775807.0) return INT64_MAX;
+    if (d <= -9223372036854775808.0) return INT64_MIN;
+    return static_cast<int64_t>(d);
 }
 
 inline uint64_t u64At(std::span<const Value> args, size_t i) {

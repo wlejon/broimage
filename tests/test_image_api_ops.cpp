@@ -25,7 +25,7 @@ namespace ev = bronze::embed;
 void broimageTestOpsSurface() {
     std::cout << "Checking the bro.image ops kernels..." << std::endl;
 
-    const char* script = R"JS(
+    const char* scripts[] = { R"JS(
         const I = bro.image;
         const fail = (m) => { throw new Error(m); };
         const eq = (got, want, what) => {
@@ -276,16 +276,86 @@ void broimageTestOpsSurface() {
         }
 
         "SUCCESS";
-    )JS";
+    )JS",
+    // A second script: MSVC caps one string literal at 16 KB. Block-scoped so
+    // its helpers do not collide with the first script's globals.
+    R"JS(
+        {
+            const I = bro.image;
+            const fail = (m) => { throw new Error(m); };
+            const eq = (got, want, what) => {
+                const g = Array.from(got).join(","), w = want.join(",");
+                if (g !== w) fail(what + " gave [" + g + "], expected [" + w + "]");
+            };
+            const throwsName = (fn, name, what) => {
+                let err = null;
+                try { fn(); } catch (e) { err = e; }
+                if (!err) fail(what + " did not throw");
+                if (err.name !== name) fail(what + " threw " + err.name + ": " + err.message);
+            };
+            const u8 = (n) => new Uint8Array(n), f32 = (n) => new Float32Array(n);
 
-    auto res = bronze::eval::evalScript(script);
-    if (res.thrown) {
-        std::cerr << "  ops script threw: " << ev::toUtf8(res.value) << std::endl;
-        std::exit(1);
-    }
-    if (ev::toUtf8(res.value) != "SUCCESS") {
-        std::cerr << "  ops script returned: " << ev::toUtf8(res.value) << std::endl;
-        std::exit(1);
+            // dimension products that wrap 64 bits used to pass the size check.
+            const big = 65536;
+            throwsName(() => I.nhwcToNchw(f32(4), f32(4), { n: big, h: big, w: big, c: big }), "RangeError", "nhwcToNchw wrapping dims");
+            throwsName(() => I.u8ToF32(f32(4), u8(4), { n: big, h: big, w: big, c: big }), "RangeError", "u8ToF32 wrapping dims");
+            throwsName(() => I.normalize(f32(4), f32(4), [0], [1], big, big, big, big), "RangeError", "normalize wrapping dims");
+            throwsName(() => I.normalizeNchw(f32(4), f32(4), { N: big, C: big, H: big, W: big, mean: [0], std: [1] }), "RangeError", "normalizeNchw wrapping dims");
+            throwsName(() => I.hwcToChw(f32(4), f32(4), { width: 1 << 30, height: 1 << 30, channels: 1 << 30 }), "RangeError", "hwcToChw wrapping dims");
+            throwsName(() => I.stencilHwc(f32(4), f32(4), { data: f32(1), w: 1, h: 1 }, { srcW: 1 << 30, srcH: 1 << 30, channels: 1 << 30 }), "RangeError", "stencilHwc wrapping dims");
+            throwsName(() => I.accumulateTile(f32(4), f32(4), f32(4), f32(4), { fullW: 1 << 30, fullH: 1 << 30, channels: 1 << 30, tw: 1, th: 1 }), "RangeError", "accumulateTile wrapping dims");
+            throwsName(() => I.resample(f32(4), f32(4), { srcW: big, srcH: big, dstW: 1, dstH: 1, channels: big }), "RangeError", "resample wrapping dims");
+            throwsName(() => I.resizeU8(u8(16), u8(16), { srcW: 1 << 30, srcH: 1 << 30, dstW: 2, dstH: 2, channels: 1 << 30 }), "RangeError", "resizeU8 wrapping row");
+
+            // script-sized allocations are capped.
+            throwsName(() => I.gradient([[0, 0, 0, 0], [1, 1, 1, 1]], 1 << 30), "RangeError", "gradient huge n");
+            throwsName(() => I.gradient({ length: 1e10 }), "RangeError", "gradient huge stop count");
+            throwsName(() => I.reduce(f32(4), "histogram", { bins: 2147483647, lo: 0, hi: 1 }), "RangeError", "histogram huge bins");
+
+            // NaN samples: lookup reads entry 0, histogram drops them, and a
+            // sample in (-1, 0) bins still truncates into bin 0.
+            {
+                const lut = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+                for (const edge of ["clamp", "wrap"]) {
+                    const dst = new Uint8Array(12);
+                    I.lookup(dst, new Float64Array([NaN, Infinity, -Infinity]), lut, { lo: 0, hi: 1, edge });
+                    if (dst[0] !== 10) fail("lookup f64 NaN (" + edge + ") gave " + dst[0]);
+                    const dst32 = new Uint8Array(12);
+                    I.lookup(dst32, new Float32Array([NaN, Infinity, -Infinity]), lut, { lo: 0, hi: 1, edge });
+                    if (dst32[0] !== 10) fail("lookup f32 NaN (" + edge + ") gave " + dst32[0]);
+                }
+                eq(I.reduce(new Float64Array([NaN, 0.25, 0.75, -0.25]), "histogram", { bins: 2, lo: 0, hi: 1 }), [2, 1], "histogram f64 NaN");
+                eq(I.reduce(new Float32Array([NaN, 0.25, 0.75, -0.25]), "histogram", { bins: 2, lo: 0, hi: 1 }), [2, 1], "histogram f32 NaN");
+            }
+
+            // far-out offsets clamp instead of overflowing int in the kernel.
+            {
+                const src = new Uint8Array([1, 2, 3, 4]);
+                const d = u8(1);
+                I.crop(d, src, { srcW: 2, srcH: 2, channels: 1, x: 2147483647, y: -2147483648, w: 1, h: 1 });
+                eq(d, [2], "crop far offset clamps to the edge");
+                const p = new Uint8Array(4);
+                I.padU8(p, src, { srcW: 2, srcH: 2, dstW: 2, dstH: 2, channels: 1, offX: -2147483648, offY: 0, pad: [9, 0, 0, 0] });
+                eq(p, [9, 9, 9, 9], "padU8 far offset is all padding");
+                const lb = new Uint8Array(4);
+                I.padU8(lb, src, { srcW: 2, srcH: 2, dstW: 2, dstH: 2, channels: 1, offX: 5, pad: [300, 0, 0, 0] });
+                eq(lb, [255, 255, 255, 255], "padU8 pad value clamps to a byte");
+            }
+        }
+
+        "SUCCESS";
+    )JS" };
+
+    for (const char* script : scripts) {
+        auto res = bronze::eval::evalScript(script);
+        if (res.thrown) {
+            std::cerr << "  ops script threw: " << ev::toUtf8(res.value) << std::endl;
+            std::exit(1);
+        }
+        if (ev::toUtf8(res.value) != "SUCCESS") {
+            std::cerr << "  ops script returned: " << ev::toUtf8(res.value) << std::endl;
+            std::exit(1);
+        }
     }
     std::cout << "  bro.image ops kernels OK." << std::endl;
 }

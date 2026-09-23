@@ -17,6 +17,28 @@ namespace broimage::api {
 
 namespace {
 
+// Script-chosen sizes the natives allocate for: a LUT's entries (4 bytes
+// each), a stop list, a histogram's bins (4 bytes each).
+constexpr int32_t kMaxLutEntries = 1 << 24;
+constexpr double kMaxGradientStops = 1 << 20;
+constexpr int32_t kMaxHistogramBins = 1 << 24;
+
+// A float LUT / histogram index, range-checked before the int conversion:
+// NaN (a NaN sample, or fmod of an infinite one) maps to 0.
+inline int lutIndex(float fi, size_t lutN, bool wrap) {
+    if (!(fi == fi)) fi = 0.0f;
+    const float lf = static_cast<float>(lutN);
+    if (wrap) {
+        fi = std::fmod(fi, lf);
+        if (!(fi == fi)) fi = 0.0f;
+        if (fi < 0.0f) fi += lf;
+    }
+    const float idxMax = static_cast<float>(lutN - 1);
+    if (fi < 0.0f) fi = 0.0f;
+    if (fi > idxMax) fi = idxMax;
+    return static_cast<int>(fi);
+}
+
 // A (dst, src, count) converter: `count` from the positional argument, then
 // both views checked against what the kernel reads and writes — `srcPer`
 // elements per unit of src and `dstPer` of dst, float32 elements where the
@@ -43,13 +65,18 @@ Value imageGradient(Value, std::span<const Value> args) {
     ArgReader reader(args);
     int32_t n = reader.getInt(1, 256);
     if (n < 2) return ev::throwRangeError("gradient: n must be >= 2");
+    if (n > kMaxLutEntries)
+        return ev::throwRangeError("gradient: n must be <= " + std::to_string(kMaxLutEntries));
 
     // args[0] is re-read from the rooted span and each stop is rooted: a
     // "length" read may allocate (property-key interning) and move them.
     Value lenVal = ev::getProperty(args[0], "length");
     if (!ev::isNumber(lenVal)) return ev::throwTypeError("gradient: stops must be an array");
-    uint32_t stopCount = static_cast<uint32_t>(ev::toDouble(lenVal));
-    if (stopCount < 2) return ev::throwTypeError("gradient: need at least 2 stops");
+    const double stopLen = ev::toDouble(lenVal);
+    if (!(stopLen >= 2)) return ev::throwTypeError("gradient: need at least 2 stops");
+    if (stopLen > kMaxGradientStops)
+        return ev::throwRangeError("gradient: at most " + std::to_string(kMaxGradientStops) + " stops");
+    const uint32_t stopCount = static_cast<uint32_t>(stopLen);
 
     std::vector<broimage::GradientStop> stops(stopCount);
     for (uint32_t i = 0; i < stopCount; i++) {
@@ -58,7 +85,8 @@ Value imageGradient(Value, std::span<const Value> args) {
             return ev::throwTypeError("gradient: stop must be an array");
 
         Value lv = ev::getProperty(stop.get(), "length");
-        uint32_t slen = ev::isNumber(lv) ? static_cast<uint32_t>(ev::toDouble(lv)) : 0;
+        const double slenD = ev::isNumber(lv) ? ev::toDouble(lv) : 0.0;
+        const uint32_t slen = slenD >= 5 ? 5 : slenD >= 4 ? 4 : 0;
         if (slen < 4)
             return ev::throwTypeError("gradient: stop must be [t, r, g, b, a?]");
 
@@ -160,20 +188,8 @@ Value imageLookup(Value, std::span<const Value> args) {
     for (size_t i = 0; i < n; i++) {
         float v = readScalar(sp + i * src.bytesPerElement, src.bytesPerElement, kind.isFloat, kind.isSigned);
         float t = (v - loF) * invSpan;
-        float fi = t * idxMax;
-        int idx;
-        if (wrap) {
-            float lf = static_cast<float>(lutN);
-            fi = std::fmod(fi, lf);
-            if (fi < 0) fi += lf;
-            idx = static_cast<int>(fi);
-            if (idx >= static_cast<int>(lutN)) idx = static_cast<int>(lutN) - 1;
-        } else {
-            if (fi < 0) fi = 0;
-            if (fi > idxMax) fi = idxMax;
-            idx = static_cast<int>(fi);
-        }
-        const uint8_t* lp = lut.data + idx * 4;
+        const int idx = lutIndex(t * idxMax, lutN, wrap);
+        const uint8_t* lp = lut.data + static_cast<size_t>(idx) * 4;
         dp[i * 4 + 0] = lp[0];
         dp[i * 4 + 1] = lp[1];
         dp[i * 4 + 2] = lp[2];
@@ -253,6 +269,8 @@ Value imageReduce(Value, std::span<const Value> args) {
         if (!getPropF64(args[2], "lo", &lo, 0)) return ev::undefined();
         if (!getPropF64(args[2], "hi", &hi, 1)) return ev::undefined();
         if (bins < 1) return ev::throwRangeError("histogram: bins must be >= 1");
+        if (bins > kMaxHistogramBins)
+            return ev::throwRangeError("histogram: bins must be <= " + std::to_string(kMaxHistogramBins));
         if (hi <= lo) return ev::throwRangeError("histogram: hi must be > lo");
 
         std::vector<uint32_t> counts(static_cast<size_t>(bins), 0);
@@ -267,7 +285,10 @@ Value imageReduce(Value, std::span<const Value> args) {
             for (size_t i = 0; i < n; i += step) {
                 float v = readAt(i);
                 float t = (v - loF) * invSpan;
-                int idx = static_cast<int>(t * static_cast<float>(bins));
+                const float fi = t * static_cast<float>(bins);
+                // Range-checked as a float first, as the Float32 kernel does.
+                if (!(fi > -1.0f) || !(fi < static_cast<float>(bins))) continue;
+                const int idx = static_cast<int>(fi);
                 if (idx < 0 || idx >= bins) continue;
                 counts[idx]++;
             }
@@ -447,10 +468,12 @@ Value imageResample(Value, std::span<const Value> args) {
     if (!getPropI32(args[2], "channels", &channels, 1)) return ev::undefined();
     if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0 || channels <= 0)
         return ev::throwRangeError("resample: all dims/channels must be positive");
-    size_t needSrc = static_cast<size_t>(srcW) * srcH * channels * 4;
-    size_t needDst = static_cast<size_t>(dstW) * dstH * channels * 4;
-    if (src.byteLength < needSrc) return ev::throwRangeError("resample: src too small");
-    if (dst.byteLength < needDst) return ev::throwRangeError("resample: dst too small");
+    const uint64_t needSrc = satMul({static_cast<uint64_t>(srcW), static_cast<uint64_t>(srcH),
+                                     static_cast<uint64_t>(channels), 4});
+    const uint64_t needDst = satMul({static_cast<uint64_t>(dstW), static_cast<uint64_t>(dstH),
+                                     static_cast<uint64_t>(channels), 4});
+    if (!requireBytes(src, needSrc, "resample") || !requireBytes(dst, needDst, "resample"))
+        return ev::undefined();
 
     std::string filter;
     if (!getPropStr(args[2], "filter", &filter)) return ev::undefined();
@@ -550,6 +573,10 @@ Value imageCrop(Value, std::span<const Value> args) {
     if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "crop") ||
         !requireImage(dst, w, h, channels, dstStride, 1, "crop"))
         return ev::undefined();
+    // Past these the kernel's edge clamp gives the same pixels, and x + i
+    // cannot overflow int.
+    x = std::clamp(x, -w, srcW);
+    y = std::clamp(y, -h, srcH);
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::crop_hwc_u8(src.data, srcW, srcH, channels, dst.data, x, y, w, h, srcStride, dstStride);
@@ -682,6 +709,10 @@ Value imagePad(Value, std::span<const Value> args) {
     if (!requireImage(src, srcW, srcH, channels, srcStride, 1, "pad") ||
         !requireImage(dst, dstW, dstH, channels, dstStride, 1, "pad"))
         return ev::undefined();
+    // Past these every pixel is padding either way, and x - offX cannot
+    // overflow int.
+    offX = std::clamp(offX, -srcW, dstW);
+    offY = std::clamp(offY, -srcH, dstH);
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::pad_hwc_u8(src.data, srcW, srcH, channels, dst.data, dstW, dstH,
@@ -879,7 +910,8 @@ Value imageNormalize(Value, std::span<const Value> args) {
 
     if (!requireFloat32(yView, "normalize") || !requireFloat32(xView, "normalize"))
         return ev::undefined();
-    const uint64_t need = static_cast<uint64_t>(n) * c * h * w * sizeof(float);
+    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
+                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w), sizeof(float)});
     if (!requireBytes(yView, need, "normalize") || !requireBytes(xView, need, "normalize"))
         return ev::undefined();
 
@@ -918,8 +950,9 @@ Value imageU8ToF32(Value, std::span<const Value> args) {
 
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("u8ToF32: invalid dimensions");
-    const uint64_t elems = static_cast<uint64_t>(n) * h * w * c;
-    if (!requireFloat32(yView, "u8ToF32") || !requireBytes(yView, elems * 4, "u8ToF32") ||
+    const uint64_t elems = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(h),
+                                   static_cast<uint64_t>(w), static_cast<uint64_t>(c)});
+    if (!requireFloat32(yView, "u8ToF32") || !requireBytes(yView, satMul({elems, 4}), "u8ToF32") ||
         !requireBytes(srcView, elems, "u8ToF32"))
         return ev::undefined();
     if (!resolveViews({&yView, &srcView})) return ev::undefined();
@@ -948,8 +981,9 @@ Value imageF32ToU8(Value, std::span<const Value> args) {
 
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("f32ToU8: invalid dimensions");
-    const uint64_t elems = static_cast<uint64_t>(n) * c * h * w;
-    if (!requireFloat32(srcView, "f32ToU8") || !requireBytes(srcView, elems * 4, "f32ToU8") ||
+    const uint64_t elems = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
+                                   static_cast<uint64_t>(h), static_cast<uint64_t>(w)});
+    if (!requireFloat32(srcView, "f32ToU8") || !requireBytes(srcView, satMul({elems, 4}), "f32ToU8") ||
         !requireBytes(yView, elems, "f32ToU8"))
         return ev::undefined();
     if (!resolveViews({&yView, &srcView})) return ev::undefined();
@@ -975,7 +1009,8 @@ Value imageNhwcToNchw(Value, std::span<const Value> args) {
 
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("nhwcToNchw: invalid dimensions");
-    const uint64_t need = static_cast<uint64_t>(n) * h * w * c * 4;
+    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(h),
+                                  static_cast<uint64_t>(w), static_cast<uint64_t>(c), 4});
     if (!requireFloat32(yView, "nhwcToNchw") || !requireFloat32(srcView, "nhwcToNchw") ||
         !requireBytes(yView, need, "nhwcToNchw") || !requireBytes(srcView, need, "nhwcToNchw"))
         return ev::undefined();
@@ -1001,7 +1036,8 @@ Value imageNchwToNhwc(Value, std::span<const Value> args) {
 
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("nchwToNhwc: invalid dimensions");
-    const uint64_t need = static_cast<uint64_t>(n) * c * h * w * 4;
+    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
+                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w), 4});
     if (!requireFloat32(yView, "nchwToNhwc") || !requireFloat32(srcView, "nchwToNhwc") ||
         !requireBytes(yView, need, "nchwToNhwc") || !requireBytes(srcView, need, "nchwToNhwc"))
         return ev::undefined();

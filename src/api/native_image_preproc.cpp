@@ -22,6 +22,7 @@
 #include <broimage/presets.h>
 #include <broimage/tiling.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -64,7 +65,8 @@ Value shuffleHwcChw(std::span<const Value> args, bool toChw) {
         return ev::undefined();
     if (w <= 0 || h <= 0 || c <= 0)
         return ev::throwRangeError(std::string(who) + ": dims/channels must be positive");
-    const size_t need = static_cast<size_t>(w) * h * c * sizeof(float);
+    const uint64_t need = satMul({static_cast<uint64_t>(w), static_cast<uint64_t>(h),
+                                  static_cast<uint64_t>(c), sizeof(float)});
     if (src.byteLength < need || dst.byteLength < need)
         return ev::throwRangeError(std::string(who) + ": buffers too small for w*h*channels");
 
@@ -166,8 +168,9 @@ Value imageU8NhwcToF32Nchw(Value, std::span<const Value> args) {
         return ev::undefined();
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError("u8NhwcToF32Nchw: N/H/W/C must be positive");
-    const size_t need = static_cast<size_t>(n) * c * h * w;
-    if (dst.byteLength < need * sizeof(float))
+    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
+                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w)});
+    if (dst.byteLength < satMul({need, sizeof(float)}))
         return ev::throwRangeError("u8NhwcToF32Nchw: dst too small");
     if (src.byteLength < need)
         return ev::throwRangeError("u8NhwcToF32Nchw: src too small");
@@ -196,9 +199,11 @@ Value imageF32NchwToU8Nhwc(Value, std::span<const Value> args) {
         return ev::undefined();
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("f32NchwToU8Nhwc: N/C/H/W must be positive");
-    if (dst.byteLength < static_cast<size_t>(n) * h * w * c)
+    const uint64_t elems = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(h),
+                                   static_cast<uint64_t>(w), static_cast<uint64_t>(c)});
+    if (dst.byteLength < elems)
         return ev::throwRangeError("f32NchwToU8Nhwc: dst too small");
-    if (src.byteLength < static_cast<size_t>(n) * h * w * c * sizeof(float))
+    if (src.byteLength < satMul({elems, sizeof(float)}))
         return ev::throwRangeError("f32NchwToU8Nhwc: src too small");
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
@@ -223,7 +228,8 @@ Value shuffleBatched(std::span<const Value> args, bool toNchw) {
         return ev::undefined();
     if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
         return ev::throwRangeError(std::string(who) + ": N/H/W/C must be positive");
-    const size_t need = static_cast<size_t>(n) * c * h * w * sizeof(float);
+    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
+                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w), sizeof(float)});
     if (dst.byteLength < need)
         return ev::throwRangeError(std::string(who) + ": dst too small");
     if (src.byteLength < need)
@@ -258,15 +264,18 @@ Value imageNormalizeNchw(Value, std::span<const Value> args) {
     if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
         return ev::throwRangeError("normalizeNchw: N/C/H/W must be positive");
 
+    // Sized before the mean/std buffers, so C is bounded by what the caller
+    // already holds rather than allocating C floats for any number it names.
+    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
+                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w), sizeof(float)});
+    if (src.byteLength < need || dst.byteLength < need)
+        return ev::throwRangeError("normalizeNchw: buffers too small for N*C*H*W");
+
     std::vector<float> mean(static_cast<size_t>(c)), stdv(static_cast<size_t>(c));
     if (!getPropFloats(args[2], "mean", mean.data(), c, nullptr))
         return ev::throwTypeError("normalizeNchw: mean must be an array of length C");
     if (!getPropFloats(args[2], "std", stdv.data(), c, nullptr))
         return ev::throwTypeError("normalizeNchw: std must be an array of length C");
-
-    const size_t need = static_cast<size_t>(n) * c * h * w * sizeof(float);
-    if (src.byteLength < need || dst.byteLength < need)
-        return ev::throwRangeError("normalizeNchw: buffers too small for N*C*H*W");
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::image_normalize_nchw_f32(reinterpret_cast<const float*>(src.data),
@@ -305,7 +314,8 @@ Value imageStencilHwc(Value, std::span<const Value> args) {
         return ev::undefined();
     if (sw <= 0 || sh <= 0 || ch <= 0)
         return ev::throwRangeError("stencilHwc: srcW/srcH/channels must be positive");
-    const size_t need = static_cast<size_t>(sw) * sh * ch * sizeof(float);
+    const uint64_t need = satMul({static_cast<uint64_t>(sw), static_cast<uint64_t>(sh),
+                                  static_cast<uint64_t>(ch), sizeof(float)});
     if (src.byteLength < need || dst.byteLength < need)
         return ev::throwRangeError("stencilHwc: buffers too small for srcW*srcH*channels");
 
@@ -380,12 +390,17 @@ Value imageAccumulateTile(Value, std::span<const Value> args) {
         return ev::undefined();
     if (fw <= 0 || fh <= 0 || ch <= 0 || tw <= 0 || th <= 0)
         return ev::throwRangeError("accumulateTile: dims/channels must be positive");
-    if (acc.byteLength < static_cast<size_t>(fw) * fh * ch * sizeof(float) ||
-        wacc.byteLength < static_cast<size_t>(fw) * fh * sizeof(float))
+    const uint64_t fullPx = satMul({static_cast<uint64_t>(fw), static_cast<uint64_t>(fh)});
+    const uint64_t tilePx = satMul({static_cast<uint64_t>(tw), static_cast<uint64_t>(th)});
+    if (acc.byteLength < satMul({fullPx, static_cast<uint64_t>(ch), sizeof(float)}) ||
+        wacc.byteLength < satMul({fullPx, sizeof(float)}))
         return ev::throwRangeError("accumulateTile: acc/wacc too small for fullW*fullH");
-    if (tile.byteLength < static_cast<size_t>(tw) * th * ch * sizeof(float) ||
-        window.byteLength < static_cast<size_t>(tw) * th * sizeof(float))
+    if (tile.byteLength < satMul({tilePx, static_cast<uint64_t>(ch), sizeof(float)}) ||
+        window.byteLength < satMul({tilePx, sizeof(float)}))
         return ev::throwRangeError("accumulateTile: tile/window too small for tw*th");
+    // Past these no tile pixel lands either way, and dstX + tx cannot overflow.
+    dx = std::clamp(dx, -tw, fw);
+    dy = std::clamp(dy, -th, fh);
     if (!resolveViews({&acc, &wacc, &tile, &window})) return ev::undefined();
 
     broimage::accumulate_tile_f32(reinterpret_cast<float*>(acc.data),

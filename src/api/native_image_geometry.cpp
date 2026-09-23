@@ -16,6 +16,7 @@
 #include <broimage/alpha.h>
 #include <broimage/geometric.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -173,8 +174,8 @@ Value imageLetterboxU8(Value, std::span<const Value> args) {
 
     int ox = 0, oy = 0, ow = 0, oh = 0;
     broimage::letterbox_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh,
-                               static_cast<uint8_t>(pad[0]), static_cast<uint8_t>(pad[1]),
-                               static_cast<uint8_t>(pad[2]), static_cast<uint8_t>(pad[3]),
+                               clampByte(pad[0]), clampByte(pad[1]),
+                               clampByte(pad[2]), clampByte(pad[3]),
                                f, &ox, &oy, &ow, &oh);
     return makeRect(ox, oy, ow, oh);
 }
@@ -202,10 +203,13 @@ Value imagePadU8(Value, std::span<const Value> args) {
     if (!requireImage(src, sw, sh, ch, ss, 1, "padU8") ||
         !requireImage(dst, dw, dh, ch, ds, 1, "padU8"))
         return ev::undefined();
+    // Past these every pixel is padding either way, and x - ox cannot overflow.
+    ox = std::clamp(ox, -sw, dw);
+    oy = std::clamp(oy, -sh, dh);
     if (!resolveViews({&dst, &src})) return ev::undefined();
     broimage::pad_hwc_u8(src.data, sw, sh, ch, dst.data, dw, dh, ox, oy,
-                         static_cast<uint8_t>(pad[0]), static_cast<uint8_t>(pad[1]),
-                         static_cast<uint8_t>(pad[2]), static_cast<uint8_t>(pad[3]),
+                         clampByte(pad[0]), clampByte(pad[1]),
+                         clampByte(pad[2]), clampByte(pad[3]),
                          ss, ds);
     return ev::undefined();
 }
@@ -228,6 +232,10 @@ Value imageCropU8(Value, std::span<const Value> args) {
     if (!requireImage(src, sw, sh, ch, ss, 1, "cropU8") ||
         !requireImage(dst, w, h, ch, ds, 1, "cropU8"))
         return ev::undefined();
+    // Past these the kernel's edge clamp gives the same pixels, and x + i
+    // cannot overflow int.
+    x = std::clamp(x, -w, sw);
+    y = std::clamp(y, -h, sh);
     if (!resolveViews({&dst, &src})) return ev::undefined();
 
     broimage::crop_hwc_u8(src.data, sw, sh, ch, dst.data, x, y, w, h, ss, ds);
@@ -382,8 +390,8 @@ Value imageLetterboxRgba8Alpha(Value, std::span<const Value> args) {
 
     int ox = 0, oy = 0, ow = 0, oh = 0;
     broimage::letterbox_rgba8_alpha(src.data, sw, sh, dst.data, dw, dh,
-                                    static_cast<uint8_t>(pad[0]), static_cast<uint8_t>(pad[1]),
-                                    static_cast<uint8_t>(pad[2]), static_cast<uint8_t>(pad[3]),
+                                    clampByte(pad[0]), clampByte(pad[1]),
+                                    clampByte(pad[2]), clampByte(pad[3]),
                                     f, &ox, &oy, &ow, &oh);
     return makeRect(ox, oy, ow, oh);
 }

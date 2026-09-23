@@ -3,10 +3,21 @@
 #include "embed/embed.h"
 #include "eval/eval.h"
 
-#include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
+
+// assert() is compiled out in the Release configuration ctest runs, which
+// left every check below inert; this one survives NDEBUG.
+#define CHECK(cond)                                                        \
+    do {                                                                   \
+        if (!(cond)) {                                                     \
+            std::cerr << "CHECK failed: " #cond " (line " << __LINE__ << ")" \
+                      << std::endl;                                        \
+            std::exit(1);                                                  \
+        }                                                                  \
+    } while (0)
 
 // tests/test_image_api_restored.cpp — the bro.image kernels the bronze port
 // dropped (bro's docs/transition-drift.md row E4).
@@ -15,6 +26,10 @@ void broimageTestRestoredSurface();
 // tests/test_image_api_paths.cpp — setPathResolver: the host's resolver is
 // consulted for every filename the file entry points take.
 void broimageTestPathResolver();
+
+// tests/test_image_api_ops.cpp — pixel checks for the ops kernels, each
+// called with an options object so GC stress can move its buffers.
+void broimageTestOpsSurface();
 
 int main() {
     namespace ev = bronze::embed;
@@ -25,19 +40,20 @@ int main() {
 
     // 1. Verify bro and bro.image mounting
     auto g = ev::globalValue("bro");
-    assert(g.found);
-    assert(ev::isObject(g.value));
+    CHECK(g.found);
+    CHECK(ev::isObject(g.value));
 
-    auto img = ev::getProperty(g.value, "image");
-    assert(ev::isObject(img));
+    // Rooted: each getProperty below may allocate and move it.
+    ev::Persistent img(ev::getProperty(g.value, "image"));
+    CHECK(ev::isObject(img.get()));
 
     // Verify codec properties
     const char* codecProps[] = {
         "transcodeKTX2", "encodePng", "encodePngFile", "encodeJpeg", "encodeJpegFile"
     };
     for (const char* prop : codecProps) {
-        auto p = ev::getProperty(img, prop);
-        assert(ev::isFunction(p));
+        auto p = ev::getProperty(img.get(), prop);
+        CHECK(ev::isFunction(p));
         std::cout << "  Found bro.image." << prop << std::endl;
     }
 
@@ -50,8 +66,8 @@ int main() {
         "normalize", "u8ToF32", "f32ToU8", "nhwcToNchw", "nchwToNhwc"
     };
     for (const char* prop : opsProps) {
-        auto p = ev::getProperty(img, prop);
-        assert(ev::isFunction(p));
+        auto p = ev::getProperty(img.get(), prop);
+        CHECK(ev::isFunction(p));
     }
     std::cout << "  Verified all image ops functions are mounted." << std::endl;
 
@@ -68,8 +84,8 @@ int main() {
             "  return (mm.min === 1.0 && mm.max === 8.0);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: alloc + reduce [PASS]" << std::endl;
     }
 
@@ -83,8 +99,8 @@ int main() {
             "  return (dst[0] === 2 && dst[1] === 1 && dst[2] === 4 && dst[3] === 3);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: flipHorizontal [PASS]" << std::endl;
     }
 
@@ -98,8 +114,8 @@ int main() {
             "  return (rgba[0] === 10 && rgba[1] === 20 && rgba[2] === 30 && rgba[3] === 200);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: rgbToRgba [PASS]" << std::endl;
     }
 
@@ -113,8 +129,8 @@ int main() {
             "  return (gray[0] === 255);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: rgbaToGray [PASS]" << std::endl;
     }
 
@@ -128,8 +144,8 @@ int main() {
             "          png[0] === 0x89 && png[1] === 0x50 && png[2] === 0x4E && png[3] === 0x47);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: encodePng [PASS]" << std::endl;
     }
 
@@ -143,8 +159,8 @@ int main() {
             "          jpg[0] === 0xFF && jpg[1] === 0xD8);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: encodeJpeg [PASS]" << std::endl;
     }
 
@@ -160,8 +176,8 @@ int main() {
             "  return (Math.abs(Y[0] - 0.0) < 1e-4 && Math.abs(Y[1] - 4.0) < 1e-4);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: normalize [PASS]" << std::endl;
     }
 
@@ -175,8 +191,8 @@ int main() {
             "  return (dst[0] === 100);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: resize [PASS]" << std::endl;
     }
 
@@ -189,12 +205,13 @@ int main() {
             "          grad[0] === 0 && grad[4] === 255);"
             "})()"
         );
-        assert(!r.thrown);
-        assert(ev::isBool(r.value) && ev::toBool(r.value));
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
         std::cout << "  eval: gradient [PASS]" << std::endl;
     }
 
     broimageTestRestoredSurface();
+    broimageTestOpsSurface();
     broimageTestPathResolver();
 
     std::cout << "All broimage Bronze JavaScript API tests passed successfully!" << std::endl;

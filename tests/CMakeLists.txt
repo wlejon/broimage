@@ -32,6 +32,7 @@ if(BROIMAGE_ENABLE_API)
     add_executable(broimage_test_api
         test_image_api.cpp
         test_image_api_restored.cpp
+        test_image_api_ops.cpp
         test_image_api_paths.cpp)
     target_include_directories(broimage_test_api PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/api
@@ -68,8 +69,17 @@ if(BROIMAGE_ENABLE_API)
         message(STATUS "broimage: broimage_test_api not registered (brass has no code generator for this target)")
     else()
         add_test(NAME broimage_test_api COMMAND broimage_test_api)
+        # The same run under bronze's GC-stress oracle: collect on every
+        # allocation and poison from-space, so a native that holds a typed
+        # array's data pointer (or any raw Value) across an allocating embed
+        # call reads poison instead of passing by luck.
+        add_test(NAME broimage_test_api_gc_stress COMMAND broimage_test_api)
+        set_tests_properties(broimage_test_api_gc_stress PROPERTIES
+            ENVIRONMENT "BRONZE_GC_STRESS=1;BRONZE_GC_POISON=1")
         if(WIN32)
             set_tests_properties(broimage_test_api PROPERTIES
+                ENVIRONMENT "PATH=$<TARGET_FILE_DIR:bronze_runtime_shared>;$<TARGET_FILE_DIR:broimage_test_api>;$ENV{PATH}")
+            set_property(TEST broimage_test_api_gc_stress APPEND PROPERTY
                 ENVIRONMENT "PATH=$<TARGET_FILE_DIR:bronze_runtime_shared>;$<TARGET_FILE_DIR:broimage_test_api>;$ENV{PATH}")
         endif()
     endif()

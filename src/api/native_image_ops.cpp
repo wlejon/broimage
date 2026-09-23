@@ -29,23 +29,25 @@ Value imageGradient(Value, std::span<const Value> args) {
     int32_t n = reader.getInt(1, 256);
     if (n < 2) return ev::throwRangeError("gradient: n must be >= 2");
 
-    Value stopsVal = args[0];
-    Value lenVal = ev::getProperty(stopsVal, "length");
+    // args[0] is re-read from the rooted span and each stop is rooted: a
+    // "length" read may allocate (property-key interning) and move them.
+    Value lenVal = ev::getProperty(args[0], "length");
     if (!ev::isNumber(lenVal)) return ev::throwTypeError("gradient: stops must be an array");
     uint32_t stopCount = static_cast<uint32_t>(ev::toDouble(lenVal));
     if (stopCount < 2) return ev::throwTypeError("gradient: need at least 2 stops");
 
     std::vector<broimage::GradientStop> stops(stopCount);
     for (uint32_t i = 0; i < stopCount; i++) {
-        Value s = ev::getElement(stopsVal, i);
-        if (!ev::isObject(s))
+        ev::Persistent stop(ev::getElement(args[0], i));
+        if (!ev::isObject(stop.get()))
             return ev::throwTypeError("gradient: stop must be an array");
 
-        Value lv = ev::getProperty(s, "length");
+        Value lv = ev::getProperty(stop.get(), "length");
         uint32_t slen = ev::isNumber(lv) ? static_cast<uint32_t>(ev::toDouble(lv)) : 0;
         if (slen < 4)
             return ev::throwTypeError("gradient: stop must be [t, r, g, b, a?]");
 
+        const Value s = stop.get();
         double t = ev::toDouble(ev::getElement(s, 0));
         double r = ev::toDouble(ev::getElement(s, 1));
         double g = ev::toDouble(ev::getElement(s, 2));

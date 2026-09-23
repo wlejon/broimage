@@ -21,54 +21,54 @@ void setPathResolver(std::function<std::string(const std::string&)> resolver) {
     pathResolverSlot() = std::move(resolver);
 }
 
+// Every Value held across an allocating call below lives in a Persistent
+// (embed.h's GC contract): each installer allocates, so a raw `img` handed to
+// the second one would name the object's pre-collection address.
 Value ensureBroImage() {
-    Value globalThisVal = ev::undefined();
+    ev::Persistent globalThisVal;
     auto gt = ev::globalValue("globalThis");
     if (gt.found && ev::isObject(gt.value)) {
-        globalThisVal = gt.value;
+        globalThisVal.set(gt.value);
     }
 
-    Value broVal = ev::globalValue("bro").found ? ev::globalValue("bro").value : ev::undefined();
-    if (!ev::isObject(broVal)) {
-        if (!ev::isUndefined(globalThisVal)) {
-            Value candidate = ev::getProperty(globalThisVal, "bro");
-            if (ev::isObject(candidate)) {
-                broVal = candidate;
-            }
-        }
+    ev::Persistent broP;
+    auto bro = ev::globalValue("bro");
+    if (bro.found && ev::isObject(bro.value)) broP.set(bro.value);
+    if (!ev::isObject(broP.get()) && ev::isObject(globalThisVal.get())) {
+        Value candidate = ev::getProperty(globalThisVal.get(), "bro");
+        if (ev::isObject(candidate)) broP.set(candidate);
     }
-    if (!ev::isObject(broVal)) {
-        broVal = ev::createObject();
-        ev::registerGlobal("bro", broVal);
-        if (!ev::isUndefined(globalThisVal)) {
-            ev::setProperty(globalThisVal, "bro", broVal);
+    if (!ev::isObject(broP.get())) {
+        broP.set(ev::createObject());
+        ev::registerGlobal("bro", broP.get());
+        if (ev::isObject(globalThisVal.get())) {
+            globalThisVal.set(ev::setProperty(globalThisVal.get(), "bro", broP.get()));
         }
     }
 
-    ev::Persistent broP(broVal);
-    Value imgVal = ev::getProperty(broP.get(), "image");
-    if (!ev::isObject(imgVal)) {
-        imgVal = ev::createObject();
-        broP.set(ev::setProperty(broP.get(), "image", imgVal));
+    ev::Persistent imgP(ev::getProperty(broP.get(), "image"));
+    if (!ev::isObject(imgP.get())) {
+        imgP.set(ev::createObject());
+        broP.set(ev::setProperty(broP.get(), "image", imgP.get()));
     }
-    return imgVal;
+    return imgP.get();
 }
 
 void installCodecs() {
-    Value img = ensureBroImage();
-    installCodecsOnto(img);
+    ev::Persistent img(ensureBroImage());
+    installCodecsOnto(img.get());
     // decode / probe / EXIF belong with the encoders: a host that mounts only
     // the codec half still needs decodeF32 and friends.
-    installDecodeOnto(img);
+    installDecodeOnto(img.get());
 }
 
 void installImage() {
-    Value img = ensureBroImage();
-    installOpsOnto(img);
-    installCodecsOnto(img);
-    installDecodeOnto(img);
-    installGeometryOnto(img);
-    installPreprocOnto(img);
+    ev::Persistent img(ensureBroImage());
+    installOpsOnto(img.get());
+    installCodecsOnto(img.get());
+    installDecodeOnto(img.get());
+    installGeometryOnto(img.get());
+    installPreprocOnto(img.get());
 }
 
 } // namespace broimage::api

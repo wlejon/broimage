@@ -32,10 +32,9 @@ bool bytesOf(Value v, std::span<const uint8_t>& out) {
 
 Value transcodeKtx2Value(Value, std::span<const Value> args) {
 #if defined(BROIMAGE_HAS_KTX2)
-    std::span<const uint8_t> bytes;
-    if (args.empty() || !bytesOf(args[0], bytes)) {
-        return ev::throwTypeError("transcodeKTX2 requires (bytes: a typed array)");
-    }
+    if (args.empty()) return ev::throwTypeError("transcodeKTX2 requires (bytes: a typed array)");
+    // The format string is read first: `bytes` is a raw pointer into the
+    // moving heap, so nothing that might allocate may run after it is taken.
     broimage::Ktx2Format target = broimage::Ktx2Format::RGBA8;
     if (args.size() > 1 && ev::isString(args[1])) {
         const std::string f = ev::toUtf8(args[1]);
@@ -46,6 +45,10 @@ Value transcodeKtx2Value(Value, std::span<const Value> args) {
         else if (f == "bc7") target = broimage::Ktx2Format::BC7;
         else if (f != "rgba8")
             return ev::throwTypeError(("transcodeKTX2: unknown format '" + f + "'").c_str());
+    }
+    std::span<const uint8_t> bytes;
+    if (!bytesOf(args[0], bytes)) {
+        return ev::throwTypeError("transcodeKTX2 requires (bytes: a typed array)");
     }
 
     broimage::Ktx2Image img = broimage::transcode_ktx2(bytes.data(), bytes.size(), target);

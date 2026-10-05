@@ -93,7 +93,11 @@ endif()
 find_package(OpenMP QUIET)
 set(BRASS_DIR "${CMAKE_SOURCE_DIR}/../brass" CACHE PATH
     "Path to standalone brass repo (set to a missing path to force submodule fallback)")
-if(NOT TARGET brass)
+# OFF builds the plain C++ kernels only, even when brass is present: what a
+# consumer that wants decode/encode/resize (a thumbnailer) and not a JIT backend
+# in its build passes.
+option(BROIMAGE_WITH_JIT "Accelerate kernels with the brass JIT when brass is available" ON)
+if(BROIMAGE_WITH_JIT AND NOT TARGET brass)
     if(EXISTS "${BRASS_DIR}/CMakeLists.txt")
         add_subdirectory("${BRASS_DIR}" "${CMAKE_BINARY_DIR}/brass" EXCLUDE_FROM_ALL)
     elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brass/CMakeLists.txt")
@@ -180,6 +184,7 @@ target_sources(broimage PRIVATE
     src/version.cpp
     src/decode.cpp
     src/encode.cpp
+    src/png_text.cpp
     src/color.cpp
     src/geometric.cpp
     src/alpha.cpp
@@ -197,7 +202,7 @@ if(TARGET basisu_transcoder)
     target_link_libraries(broimage PRIVATE basisu_transcoder)
     target_compile_definitions(broimage PUBLIC BROIMAGE_HAS_KTX2=1)
 endif()
-if(TARGET brass)
+if(BROIMAGE_WITH_JIT AND TARGET brass)
     target_link_libraries(broimage PUBLIC brass)
     target_compile_definitions(broimage PUBLIC BROIMAGE_HAS_BRASS_JIT=1)
     target_sources(broimage PRIVATE

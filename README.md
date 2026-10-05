@@ -27,6 +27,10 @@ decode path or resize kernel.
   and `apply_exif_orientation` exposed for callers holding their own buffers.
   16-bit (`decode_file_u16`) and HDR / float (`decode_file_f32`) paths for depth
   maps and Radiance sources.
+- **PNG text** — `read_png_info` reads IHDR and every tEXt / zTXt / iTXt chunk
+  without decoding pixels; `encode_png_memory_with_text` writes a PNG carrying
+  key/value tags (the Freedesktop thumbnail cache's `Thumb::URI` /
+  `Thumb::MTime`, `Software`, ...).
 - **Geometric** — resize (nearest / bilinear / bicubic / lanczos3 / area) over
   HWC / CHW float32 and HWC u8, crop, center-crop, letterbox, constant-pad,
   flip (horizontal / vertical), rotate (90-degree turns). The u8 ops take row
@@ -81,6 +85,9 @@ GPU build resolves brotensor's CUDA / Metal backend (the GPU image kernels live
 there). Built inside the bro tree, brotensor is already a target and gets reused
 backend and all. Tests are on by default and build only for a standalone
 configure (`BROIMAGE_TESTS`); installation is opt-in via `BROIMAGE_INSTALL`.
+`BROIMAGE_WITH_JIT=OFF` keeps brass out of the build even when `../brass` is
+present (plain C++ kernels only), for consumers that only decode, encode and
+resize.
 
 The siblings are resolved from `../bromath` and `../brotensor`, so clone them
 next to this repo (or point `BROMATH_DIR` / `BROTENSOR_DIR` elsewhere).

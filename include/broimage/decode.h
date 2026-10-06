@@ -34,7 +34,9 @@ bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
 // and so the decoded size are read from the headers first, and nothing is
 // decoded when they exceed the limits. Every frame of an animated GIF is
 // decoded (composed onto the canvas, as stb_image does); any other format
-// yields its one frame.
+// yields its one frame. Besides stb_image's formats this reads baseline
+// uncompressed TIFF (8-bit RGB, RGBA, gray, gray + alpha; strips, either
+// byte order), which is what chafa sends as an iTerm2 inline image.
 
 struct DecodeLimits {
     int max_width  = 0;          // 0: no limit

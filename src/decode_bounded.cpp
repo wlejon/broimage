@@ -3,6 +3,8 @@
 
 #include "broimage/decode.h"
 
+#include "decode_tiff.h"
+
 #include <stb_image.h>
 
 #include <cstring>
@@ -69,13 +71,40 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         fail(error, "no data, or more than a decoder takes", out);
         return false;
     }
+    auto within = [&](uint64_t w, uint64_t h, uint64_t frames) {
+        if ((limits.max_width > 0 && w > uint64_t(limits.max_width)) ||
+            (limits.max_height > 0 && h > uint64_t(limits.max_height))) {
+            fail(error, "image dimensions exceed the limit", out);
+            return false;
+        }
+        const uint64_t bytes = w * h * 4;
+        if (limits.max_bytes > 0 && (bytes > limits.max_bytes || frames > limits.max_bytes / bytes)) {
+            fail(error, "decoded size exceeds the limit", out);
+            return false;
+        }
+        return true;
+    };
+
+    if (detail::is_tiff(data, size)) {
+        detail::TiffLayout l;
+        if (!detail::tiff_header(data, size, l) || l.width > 1u << 16 || l.height > 1u << 16) {
+            fail(error, "not a baseline uncompressed 8-bit TIFF", out);
+            return false;
+        }
+        if (!within(l.width, l.height, 1)) return false;
+        out.frames.resize(1);
+        if (!detail::tiff_decode(data, size, l, out.frames[0].rgba)) {
+            fail(error, "TIFF strips are truncated", out);
+            return false;
+        }
+        out.width = int(l.width);
+        out.height = int(l.height);
+        return true;
+    }
+
     int w = 0, h = 0, c = 0;
     if (!stbi_info_from_memory(data, int(size), &w, &h, &c) || w <= 0 || h <= 0) {
         fail(error, stbi_failure_reason() ? stbi_failure_reason() : "unrecognized image", out);
-        return false;
-    }
-    if ((limits.max_width > 0 && w > limits.max_width) || (limits.max_height > 0 && h > limits.max_height)) {
-        fail(error, "image dimensions exceed the limit", out);
         return false;
     }
     const bool gif = is_gif(data, size);
@@ -84,11 +113,8 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         fail(error, "a GIF without frames", out);
         return false;
     }
+    if (!within(uint64_t(w), uint64_t(h), uint64_t(frames))) return false;
     const std::size_t frame_bytes = std::size_t(w) * std::size_t(h) * 4;
-    if (limits.max_bytes > 0 && (frame_bytes > limits.max_bytes || std::size_t(frames) > limits.max_bytes / frame_bytes)) {
-        fail(error, "decoded size exceeds the limit", out);
-        return false;
-    }
 
     if (gif && frames > 1) {
         int* delays = nullptr;

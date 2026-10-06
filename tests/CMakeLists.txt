@@ -11,6 +11,7 @@ endfunction()
 
 broimage_add_test(broimage_test_smoke           test_smoke.cpp)
 broimage_add_test(broimage_test_decode_encode   test_decode_encode.cpp)
+broimage_add_test(broimage_test_decode_bounded  test_decode_bounded.cpp)
 broimage_add_test(broimage_test_png_text        test_png_text.cpp)
 broimage_add_test(broimage_test_color           test_color.cpp)
 broimage_add_test(broimage_test_geometric       test_geometric.cpp)

@@ -183,6 +183,7 @@ endif()
 target_sources(broimage PRIVATE
     src/version.cpp
     src/decode.cpp
+    src/decode_bounded.cpp
     src/encode.cpp
     src/png_text.cpp
     src/color.cpp

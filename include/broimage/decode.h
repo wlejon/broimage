@@ -27,6 +27,41 @@ bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
 bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
                              int* width, int* height, int* channels);
 
+// ----- Bounded and animated decode ------------------------------------------
+//
+// For untrusted input whose size the caller must cap before paying for it (a
+// terminal decoding what a program sent): the dimensions, the frame count
+// and so the decoded size are read from the headers first, and nothing is
+// decoded when they exceed the limits. Every frame of an animated GIF is
+// decoded (composed onto the canvas, as stb_image does); any other format
+// yields its one frame.
+
+struct DecodeLimits {
+    int max_width  = 0;          // 0: no limit
+    int max_height = 0;
+    std::size_t max_bytes = 0;   // RGBA8 of all frames together; 0: no limit
+};
+
+struct AnimationFrame {
+    std::vector<uint8_t> rgba;   // width * height * 4
+    int delay_ms = 0;            // how long it shows (GIF: as stored; 0 = unspecified)
+};
+
+struct Animation {
+    int width  = 0;
+    int height = 0;
+    std::vector<AnimationFrame> frames;
+};
+
+// The number of frames a GIF holds (its image descriptors), from its block
+// structure without decoding anything; 0 when `data` is not a well-formed GIF.
+int gif_frame_count(const uint8_t* data, std::size_t size);
+
+// Decode `data` within `limits`. False (and `out` empty) on a decode
+// failure or when the image would exceed a limit; `error` says which.
+bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLimits& limits,
+                           Animation& out, std::string* error = nullptr);
+
 // ----- High-bit-depth / HDR --------------------------------------------------
 //
 // 16-bit and float decode for formats that carry more than 8 bits per channel

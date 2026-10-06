@@ -48,45 +48,47 @@ option(BROIMAGE_WITH_TENSOR "Build the brotensor adapter (image preprocessing to
 # broimage ships no GPU kernels of its own. GPU image preprocessing
 # (image_normalize, u8_nhwc -> f32_nchw, future GPU resize) lives in
 # brotensor — broimage forwards the backend choice so a standalone GPU build
-# resolves brotensor's CUDA/Metal backend. Built inside bro, brotensor is
-# already a target (added transitively) and the if(NOT TARGET ...) guards
-# below reuse it, backend and all.
-option(BROTENSOR_WITH_CUDA  "Build the CUDA GPU backend"  OFF)
-option(BROTENSOR_WITH_METAL "Build the Metal GPU backend" OFF)
+# resolves brotensor's CUDA, Metal or Vulkan backend. Built inside bro,
+# brotensor is already a target (added transitively) and the sibling lookup
+# below reuses it, backend and all.
+option(BROTENSOR_WITH_CUDA   "Build the CUDA GPU backend"   OFF)
+option(BROTENSOR_WITH_METAL  "Build the Metal GPU backend"  OFF)
+option(BROTENSOR_WITH_VULKAN "Build the Vulkan GPU backend" OFF)
 
 # --- Siblings: bromath (header-only) + brotensor (tensor + ops) ---
 #
-# Prefer standalone repos at ../<name>; fall back to third_party/ submodules.
-# Matches the pattern documented in bro/docs/multi-repo-workflow.md.
-
-set(BROMATH_DIR "${CMAKE_SOURCE_DIR}/../bromath" CACHE PATH
-    "Path to standalone bromath repo (set to a missing path to force submodule fallback)")
-if(NOT TARGET bromath)
-    if(EXISTS "${BROMATH_DIR}/CMakeLists.txt")
-        add_subdirectory("${BROMATH_DIR}" "${CMAKE_BINARY_DIR}/bromath" EXCLUDE_FROM_ALL)
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/bromath/CMakeLists.txt")
-        add_subdirectory(third_party/bromath EXCLUDE_FROM_ALL)
+# Each resolves like every repo in the bro ecosystem: an existing target (a
+# superbuild already added it) wins; otherwise a checkout beside the top-level
+# project (../<name>, overridable with -D<NAME>_DIR=<path>); otherwise the
+# top-level project's third_party/<name> submodule (`git submodule update
+# --init --recursive`). third_party/ is flat: it carries every sibling broimage
+# needs, transitive ones included. bronze and brass are the exception: no
+# submodule, see the api block below.
+function(broimage_sibling name what)
+    if(TARGET ${name})
+        return()
+    endif()
+    string(TOUPPER "${name}" _upper)
+    set(${_upper}_DIR "${CMAKE_SOURCE_DIR}/../${name}" CACHE PATH
+        "Path to standalone ${name} repo (set to a missing path to force submodule fallback)")
+    if(EXISTS "${${_upper}_DIR}/CMakeLists.txt")
+        message(STATUS "broimage: ${name} from ${${_upper}_DIR}")
+        add_subdirectory("${${_upper}_DIR}" "${CMAKE_BINARY_DIR}/${name}" EXCLUDE_FROM_ALL)
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/${name}/CMakeLists.txt")
+        message(STATUS "broimage: ${name} from ${CMAKE_SOURCE_DIR}/third_party/${name} (submodule)")
+        add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/${name}" "${CMAKE_BINARY_DIR}/${name}" EXCLUDE_FROM_ALL)
     else()
         message(FATAL_ERROR
-            "bromath not found at ${BROMATH_DIR} or third_party/bromath. "
-            "Clone the bromath repo next to this repo, or override with -DBROMATH_DIR=...")
+            "broimage needs ${name} (${what}): not found at ${${_upper}_DIR} or "
+            "${CMAKE_SOURCE_DIR}/third_party/${name}. Clone https://github.com/wlejon/${name} next "
+            "to this repo, run `git submodule update --init --recursive`, or override with "
+            "-D${_upper}_DIR=...")
     endif()
-endif()
+endfunction()
 
+broimage_sibling(bromath "math headers")
 if(BROIMAGE_WITH_TENSOR)
-    set(BROTENSOR_DIR "${CMAKE_SOURCE_DIR}/../brotensor" CACHE PATH
-        "Path to standalone brotensor repo (set to a missing path to force submodule fallback)")
-    if(NOT TARGET brotensor)
-        if(EXISTS "${BROTENSOR_DIR}/CMakeLists.txt")
-            add_subdirectory("${BROTENSOR_DIR}" "${CMAKE_BINARY_DIR}/brotensor" EXCLUDE_FROM_ALL)
-        elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brotensor/CMakeLists.txt")
-            add_subdirectory(third_party/brotensor EXCLUDE_FROM_ALL)
-        else()
-            message(FATAL_ERROR
-                "brotensor not found at ${BROTENSOR_DIR} or third_party/brotensor. "
-                "Clone the brotensor repo next to this repo, or override with -DBROTENSOR_DIR=...")
-        endif()
-    endif()
+    broimage_sibling(brotensor "the tensor adapter")
 endif()
 
 # --- brass dependency (JIT acceleration) ---
@@ -233,6 +235,10 @@ if(BROIMAGE_ENABLE_API)
             # Explicit BRONZE_DIR supplied
         elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../bronze/CMakeLists.txt")
             set(BRONZE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../bronze" CACHE PATH "bronze source tree")
+        elseif(EXISTS "${CMAKE_SOURCE_DIR}/../bronze/CMakeLists.txt")
+            # Beside the top-level project: this repo is a third_party/
+            # submodule of the project being built.
+            set(BRONZE_DIR "${CMAKE_SOURCE_DIR}/../bronze" CACHE PATH "bronze source tree")
         endif()
 
         if(NOT BRONZE_DIR OR NOT EXISTS "${BRONZE_DIR}/CMakeLists.txt")

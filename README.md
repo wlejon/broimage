@@ -6,16 +6,22 @@
 
 Image processing for the bro stack — decode/encode, geometric and color ops,
 normalization, and composable typed-buffer kernels. Pure C++20, built on
-[bromath](https://github.com/wlejon/bromath) and
-[brotensor](https://github.com/wlejon/brotensor) (for GPU preprocessing when
-a backend is enabled). CPU-by-default; GPU paths forward to brotensor's
-CUDA / Metal backends.
+[bromath](https://github.com/wlejon/bromath) and, optionally,
+[brotensor](https://github.com/wlejon/brotensor) (the tensor adapter). The
+kernels run on the CPU, accelerated by the [brass](https://github.com/wlejon/brass)
+JIT where brass is present. GPU preprocessing goes through brotensor and runs on
+whichever backend the tensor lives on: CUDA, Metal or Vulkan.
 
-broimage is the single home for image work across the bro stack. Everything
-routes through it: bro's HTML `Image` decode and `bro.image` JS kernels, brolm's
-CLIP/SAM/VLM host-side resize + normalize, brodiffusion's pixel preprocessing,
-and the `image_preproc` ops. Nothing else in the tree should carry its own
+broimage is the single home for image work across the
+[bro ecosystem](https://github.com/wlejon/bro/blob/main/docs/ecosystem.md).
+Everything routes through it: [bro](https://github.com/wlejon/bro)'s HTML
+`Image` decode and `bro.image` JS kernels (the binding in `src/api/`,
+`broimage_api`), brokit, brolm's CLIP/SAM/VLM host-side resize + normalize,
+brovisionml and brodiffusion's pixel preprocessing, bromux's inline terminal
+images, and brothumb's thumbnails. Nothing else in the tree should carry its own
 decode path or resize kernel.
+
+Built and tested on Windows, Linux and macOS (x86-64 and arm64).
 
 ## Scope
 
@@ -27,6 +33,14 @@ decode path or resize kernel.
   and `apply_exif_orientation` exposed for callers holding their own buffers.
   16-bit (`decode_file_u16`) and HDR / float (`decode_file_f32`) paths for depth
   maps and Radiance sources.
+- **Bounded and animated decode** — `decode_memory_bounded` reads dimensions
+  and frame count from the headers and refuses input over caller-set
+  `DecodeLimits` before decoding anything (for untrusted bytes); decodes every
+  frame of an animated GIF, and baseline uncompressed TIFF besides stb's
+  formats.
+- **KTX2** — `transcode_ktx2` turns a `.ktx2` (ETC1S/BasisLZ or UASTC,
+  optionally Zstd-supercompressed) into RGBA8 or BC1/3/4/5/7 mips, through a
+  vendored transcode-only slice of basis_universal.
 - **PNG text** — `read_png_info` reads IHDR and every tEXt / zTXt / iTXt chunk
   without decoding pixels; `encode_png_memory_with_text` writes a PNG carrying
   key/value tags (the Freedesktop thumbnail cache's `Thumb::URI` /
@@ -58,17 +72,26 @@ decode path or resize kernel.
   `image_u8_to_f32_nhwc_to_nchw` so callers reach for broimage even when
   the destination is a `brotensor::Tensor`.
 
-GPU image ops live in brotensor (one place for CUDA / Metal kernels); broimage
-calls into them when handed a GPU `brotensor::Tensor`.
+- **JIT** — with brass present (`BROIMAGE_WITH_JIT`, on by default), the fused
+  resize + u8 → f32 + normalize + HWC → CHW preprocessing pipeline compiles to
+  native code per shape (`preproc_jit.h`, `broimage/jit/`); without it the same
+  call runs the plain C++ path.
+- **JavaScript binding** — `broimage_api` mounts the decode, codec, geometric,
+  color, preproc and kernel surface on `bro.image` in bronze, the JavaScript
+  runtime bro runs apps on.
 
-broimage's GPU story is brotensor *compute* (CUDA / Metal) on tensors — it has no
-WebGL and does not render. The JS `bro.image.gpu.*` surface (`colormap`, `fbm2D`)
-is a **WebGL2 renderer that lives in bro** (`bro/src/js/js/image_gpu.js`), not in
-broimage; it shares the `bro.image` namespace with these CPU kernels for
-ergonomics (e.g. the CPU `lookup` and GPU `colormap` both consume a LUT built by
-`bro.image.gradient`), but is a separate layer.
+GPU image ops live in brotensor (one place for the CUDA, Metal and Vulkan
+kernels); broimage calls into them when handed a GPU `brotensor::Tensor`, and
+the op runs on that tensor's device.
 
-See [bro/docs/multi-repo-workflow.md](https://github.com/wlejon/bro/blob/main/docs/multi-repo-workflow.md)
+broimage's GPU story is brotensor *compute* on tensors — it has no WebGL and
+does not render. The JS `bro.image.gpu.*` surface (`colormap`, `fbm2D`) is a
+**WebGL2 renderer that lives in bro**, not in broimage; it shares the
+`bro.image` namespace with these CPU kernels for ergonomics (e.g. the CPU
+`lookup` and GPU `colormap` both consume a LUT built by `bro.image.gradient`),
+but is a separate layer.
+
+See bro's [multi-repo workflow](https://github.com/wlejon/bro/blob/main/docs/multi-repo-workflow.md)
 for how this slots into the multi-repo dev loop.
 
 ## Build
@@ -80,17 +103,33 @@ ctest --test-dir build -C Debug
 ```
 
 broimage ships no GPU language of its own. The `BROTENSOR_WITH_CUDA` /
-`BROTENSOR_WITH_METAL` options only forward the backend choice so a standalone
-GPU build resolves brotensor's CUDA / Metal backend (the GPU image kernels live
-there). Built inside the bro tree, brotensor is already a target and gets reused
-backend and all. Tests are on by default and build only for a standalone
-configure (`BROIMAGE_TESTS`); installation is opt-in via `BROIMAGE_INSTALL`.
-`BROIMAGE_WITH_JIT=OFF` keeps brass out of the build even when `../brass` is
-present (plain C++ kernels only), for consumers that only decode, encode and
-resize.
+`BROTENSOR_WITH_METAL` / `BROTENSOR_WITH_VULKAN` options only forward the
+backend choice so a standalone GPU build resolves that brotensor backend (the
+GPU image kernels live there). Built inside the bro tree, brotensor is already a
+target and gets reused backend and all. Tests are on by default and build only
+for a standalone configure (`BROIMAGE_TESTS`); installation is opt-in via
+`BROIMAGE_INSTALL`. `BROIMAGE_WITH_TENSOR=OFF` drops brotensor entirely,
+`BROIMAGE_ENABLE_API=OFF` drops the JavaScript binding (and with it bronze), and
+`BROIMAGE_WITH_JIT=OFF` keeps brass out of the build even when it is present
+(plain C++ kernels only), for consumers that only decode, encode and resize.
 
-The siblings are resolved from `../bromath` and `../brotensor`, so clone them
-next to this repo (or point `BROMATH_DIR` / `BROTENSOR_DIR` elsewhere).
+**Siblings.** bromath and brotensor resolve the way every repo in the ecosystem
+resolves a sibling: an existing target wins, then a checkout beside this one
+(`../bromath`, `../brotensor`; override with `-DBROMATH_DIR` / `-DBROTENSOR_DIR`),
+then the `third_party/` submodules:
+
+```bash
+# Sibling layout (development): bromath, brotensor, bronze, brass beside broimage
+cmake -B build
+
+# Fresh clone: the siblings come from third_party/
+git clone --recursive https://github.com/wlejon/broimage
+```
+
+The JavaScript binding needs [bronze](https://github.com/wlejon/bronze) and
+[brass](https://github.com/wlejon/brass) beside this repository in either layout
+(or `-DBRONZE_DIR=<path>`): they have no submodule, because the binding has to be
+compiled against the same bronze as the program that loads it.
 
 ## CI
 
@@ -99,7 +138,9 @@ default configuration that brolm and brosoundml consume. A separate job builds
 `BROIMAGE_WITH_TENSOR=OFF` — the minimal, Tensor-free configuration a bare `bro`
 build asks for. Nobody develops in it and every default build has the adapter on,
 so a symbol that leaks outside the `BROIMAGE_WITH_TENSOR` guard compiles fine
-everywhere except there; the job exists to catch that.
+everywhere except there; the job exists to catch that. A third job builds from
+a recursive clone with no sibling checkouts, so the `third_party/` submodule
+fallback stays buildable.
 
 Coverage of `src/` + `include/broimage/` lands in each run's job summary
 (`-DBROIMAGE_COVERAGE=ON` locally; GCC/Clang only). [CodeQL](.github/workflows/codeql.yml)
@@ -111,8 +152,8 @@ belong upstream.
 
 ## Versioning
 
-Pre-1.0. Siblings vendor this repo via `add_subdirectory` and build from source,
-so a tag is a pin point rather than a compatibility promise.
+Pre-1.0. Consumers build this repo from source (a sibling checkout or a
+submodule), so a tag is a pin point rather than a compatibility promise.
 
 ## License
 

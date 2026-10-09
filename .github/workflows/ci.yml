@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 # Every job builds a plain clone. broimage's dependencies (bromath, brotensor,
-# and bronze with brass for the api) come from the commits CMakeLists.txt pins
+# and bronze with brass for the api) come from the heads of their main branches
 # (cmake/bro_deps.cmake), fetched at configure; there are no sibling checkouts
 # and no submodules. bronze and brass compile inside this build tree with the
 # job's own compiler and CRT — the api is bound across bronze's C++ embed

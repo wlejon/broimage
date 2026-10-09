@@ -33,7 +33,7 @@ jobs:
           path: broimage
 
       # bromath, brotensor and bronze (with brass, for the api) are fetched at
-      # configure from the pinned commits. Pre-built with the other
+      # configure from the heads of their main branches. Pre-built with the other
       # dependencies below, ahead of the trace; source-root is the second line,
       # keeping any of their files out of the database.
 

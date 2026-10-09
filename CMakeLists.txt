@@ -58,10 +58,10 @@ option(BROTENSOR_WITH_VULKAN "Build the Vulkan GPU backend" OFF)
 # --- Dependencies ---
 #
 # Resolved by cmake/bro_deps.cmake, like every repo in the bro ecosystem: an
-# existing target (a superbuild already added it, and its pins win) first;
+# existing target (a superbuild already added it, and its choice wins) first;
 # otherwise the ../<name> working tree beside the top-level project; otherwise
-# the commit pinned here, fetched at configure. Leaves first, so these pins
-# are the ones a standalone build uses.
+# the head of its main, fetched at configure. Leaves first, so a standalone
+# build resolves each of them once.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bro_deps.cmake)
 
 option(BROIMAGE_ENABLE_API "Build Bronze JavaScript API" ON)

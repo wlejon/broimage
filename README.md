@@ -122,7 +122,7 @@ any dependency with `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<path>`.
 
 ```bash
 # A plain clone builds as is; working trees beside it (../bromath, ../bronze, ...)
-# replace the pinned commits for local development.
+# replace the fetched heads of their main branches for local development.
 git clone https://github.com/wlejon/broimage
 cmake -S broimage -B build
 ```

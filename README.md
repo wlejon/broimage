@@ -113,22 +113,21 @@ for a standalone configure (`BROIMAGE_TESTS`); installation is opt-in via
 `BROIMAGE_WITH_JIT=OFF` keeps brass out of the build even when it is present
 (plain C++ kernels only), for consumers that only decode, encode and resize.
 
-**Siblings.** bromath and brotensor resolve the way every repo in the ecosystem
-resolves a sibling: an existing target wins, then a checkout beside this one
-(`../bromath`, `../brotensor`; override with `-DBROMATH_DIR` / `-DBROTENSOR_DIR`),
-then the `third_party/` submodules:
+**Dependencies.** bromath, brotensor, and (for the JavaScript binding)
+[bronze](https://github.com/wlejon/bronze) with [brass](https://github.com/wlejon/brass)
+resolve the way every repo in the ecosystem resolves one (`cmake/bro_deps.cmake`):
+an existing target wins, then a working tree beside this one (`../<name>`), then the
+commit `CMakeLists.txt` pins, fetched at configure. There are no submodules; override
+any dependency with `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<path>`.
 
 ```bash
-# Sibling layout (development): bromath, brotensor, bronze, brass beside broimage
-cmake -B build
-
-# Fresh clone: the siblings come from third_party/
-git clone --recursive https://github.com/wlejon/broimage
+# A plain clone builds as is; working trees beside it (../bromath, ../bronze, ...)
+# replace the pinned commits for local development.
+git clone https://github.com/wlejon/broimage
+cmake -S broimage -B build
 ```
 
-The JavaScript binding needs [bronze](https://github.com/wlejon/bronze) and
-[brass](https://github.com/wlejon/brass) beside this repository in either layout
-(or `-DBRONZE_DIR=<path>`): they have no submodule, because the binding has to be
+bronze and brass compile inside the build tree, because the binding has to be
 compiled against the same bronze as the program that loads it.
 
 ## CI
@@ -138,9 +137,8 @@ default configuration that brolm and brosoundml consume. A separate job builds
 `BROIMAGE_WITH_TENSOR=OFF` — the minimal, Tensor-free configuration a bare `bro`
 build asks for. Nobody develops in it and every default build has the adapter on,
 so a symbol that leaks outside the `BROIMAGE_WITH_TENSOR` guard compiles fine
-everywhere except there; the job exists to catch that. A third job builds from
-a recursive clone with no sibling checkouts, so the `third_party/` submodule
-fallback stays buildable.
+everywhere except there; the job exists to catch that. Every job builds a plain
+clone with no sibling checkouts, so the pinned dependencies stay buildable.
 
 Coverage of `src/` + `include/broimage/` lands in each run's job summary
 (`-DBROIMAGE_COVERAGE=ON` locally; GCC/Clang only). [CodeQL](.github/workflows/codeql.yml)
@@ -152,8 +150,8 @@ belong upstream.
 
 ## Versioning
 
-Pre-1.0. Consumers build this repo from source (a sibling checkout or a
-submodule), so a tag is a pin point rather than a compatibility promise.
+Pre-1.0. Consumers build this repo from source (a sibling working tree or a
+pinned commit), so a tag is a pin point rather than a compatibility promise.
 
 ## License
 

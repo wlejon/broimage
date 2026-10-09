@@ -10,32 +10,17 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# broimage resolves its siblings from ../<name> (see the BROMATH_DIR /
-# BROTENSOR_DIR blocks in CMakeLists.txt), so every job here has to reconstruct
-# that layout in the runner workspace before configuring:
-#
-#     $GITHUB_WORKSPACE/
-#       broimage/   <- this repo, checked out into a named path, not the root
-#       bromath/
-#       brotensor/
-#       bronze/     <- the JavaScript runtime broimage_api binds
-#       brass/      <- bronze's code generator
-#
-# bronze and brass are laid out by bronze's checkout-toolchain action and
-# compiled inside this build tree (bronze add_subdirectory()s brass), with
-# the job's own compiler and CRT — the api is bound across bronze's C++ embed
+# Every job builds a plain clone. broimage's dependencies (bromath, brotensor,
+# and bronze with brass for the api) come from the commits CMakeLists.txt pins
+# (cmake/bro_deps.cmake), fetched at configure; there are no sibling checkouts
+# and no submodules. bronze and brass compile inside this build tree with the
+# job's own compiler and CRT — the api is bound across bronze's C++ embed
 # boundary, so a prebuilt bronze would be an unverifiable ABI hazard. That is
 # what makes broimage_test_api the check that the library works the way bro
 # uses it.
 #
-# Hence `path:` on all the checkouts and `cmake -S broimage`. Checking this
-# repo out at the workspace root — the default — puts ../bromath *outside* the
-# workspace and the configure dies with the FATAL_ERROR from CMakeLists.
-#
-# The siblings are taken from main. That mirrors how the stack is actually
-# developed (everything tracks main; nothing is pinned), which means this CI
-# also catches a breaking change landing in bromath or brotensor — the failure
-# shows up here rather than the next time someone builds broimage by hand.
+# The repo is checked out under broimage/ (`cmake -S broimage`) so the build
+# tree sits beside it rather than inside it.
 jobs:
   test:
     name: ${{ matrix.name }}
@@ -52,18 +37,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: broimage
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/bromath
-          path: bromath
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/brotensor
-          path: brotensor
-
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
@@ -101,7 +74,9 @@ jobs:
   # `bro` build asks for, and it is exactly the configuration that rots
   # unnoticed — nobody develops in it, and every default build has the adapter
   # on, so an #include or a symbol that leaks outside the BROIMAGE_WITH_TENSOR
-  # guard compiles fine everywhere except here.
+  # guard compiles fine everywhere except here. Tensor-free, not bronze-free:
+  # the api (BROIMAGE_ENABLE_API, on by default) is part of what a minimal bro
+  # links.
   no-tensor:
     name: No brotensor · ubuntu-24.04
     runs-on: ubuntu-24.04
@@ -109,15 +84,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: broimage
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/bromath
-          path: bromath
-
-      # Tensor-free, not bronze-free: the api (BROIMAGE_ENABLE_API, on by
-      # default) is part of what a minimal bro links.
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install Ninja
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
@@ -127,44 +93,6 @@ jobs:
           cmake -S broimage -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBROIMAGE_WITH_TENSOR=OFF
-
-      - name: Build
-        run: cmake --build build --parallel 4
-
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
-
-  # ── Submodule fallback ────────────────────────────────────────────────────
-  #
-  # No sibling checkouts: bromath and brotensor come from the flat third_party/
-  # submodules at the commits this repo pins, as they do for a fresh
-  # `git clone --recursive`. bronze and brass are the documented exception
-  # (the api has to compile against the bronze of the program that loads it,
-  # so there is no submodule for either) and are laid out beside the repo as
-  # in every other job. The configure step checks each sibling really took
-  # the submodule path.
-  submodule:
-    name: Submodule fallback · ubuntu-24.04
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          path: broimage
-          submodules: recursive
-
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
-
-      - name: Install Ninja
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
-
-      - name: Configure
-        shell: bash
-        run: |
-          test ! -e bromath && test ! -e brotensor
-          cmake -S broimage -B build -G Ninja -DCMAKE_BUILD_TYPE=Release | tee configure.log
-          for s in bromath brotensor; do
-            grep -q "broimage: $s from .*third_party/$s (submodule)" configure.log
-          done
 
       - name: Build
         run: cmake --build build --parallel 4
@@ -184,18 +112,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: broimage
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/bromath
-          path: bromath
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/brotensor
-          path: brotensor
-
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install gcovr + Ninja
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gcovr ninja-build

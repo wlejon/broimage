@@ -55,56 +55,41 @@ option(BROTENSOR_WITH_CUDA   "Build the CUDA GPU backend"   OFF)
 option(BROTENSOR_WITH_METAL  "Build the Metal GPU backend"  OFF)
 option(BROTENSOR_WITH_VULKAN "Build the Vulkan GPU backend" OFF)
 
-# --- Siblings: bromath (header-only) + brotensor (tensor + ops) ---
+# --- Dependencies ---
 #
-# Each resolves like every repo in the bro ecosystem: an existing target (a
-# superbuild already added it) wins; otherwise a checkout beside the top-level
-# project (../<name>, overridable with -D<NAME>_DIR=<path>); otherwise the
-# top-level project's third_party/<name> submodule (`git submodule update
-# --init --recursive`). third_party/ is flat: it carries every sibling broimage
-# needs, transitive ones included. bronze and brass are the exception: no
-# submodule, see the api block below.
-function(broimage_sibling name what)
-    if(TARGET ${name})
-        return()
-    endif()
-    string(TOUPPER "${name}" _upper)
-    set(${_upper}_DIR "${CMAKE_SOURCE_DIR}/../${name}" CACHE PATH
-        "Path to standalone ${name} repo (set to a missing path to force submodule fallback)")
-    if(EXISTS "${${_upper}_DIR}/CMakeLists.txt")
-        message(STATUS "broimage: ${name} from ${${_upper}_DIR}")
-        add_subdirectory("${${_upper}_DIR}" "${CMAKE_BINARY_DIR}/${name}" EXCLUDE_FROM_ALL)
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/${name}/CMakeLists.txt")
-        message(STATUS "broimage: ${name} from ${CMAKE_SOURCE_DIR}/third_party/${name} (submodule)")
-        add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/${name}" "${CMAKE_BINARY_DIR}/${name}" EXCLUDE_FROM_ALL)
-    else()
-        message(FATAL_ERROR
-            "broimage needs ${name} (${what}): not found at ${${_upper}_DIR} or "
-            "${CMAKE_SOURCE_DIR}/third_party/${name}. Clone https://github.com/wlejon/${name} next "
-            "to this repo, run `git submodule update --init --recursive`, or override with "
-            "-D${_upper}_DIR=...")
-    endif()
-endfunction()
+# Resolved by cmake/bro_deps.cmake, like every repo in the bro ecosystem: an
+# existing target (a superbuild already added it, and its pins win) first;
+# otherwise the ../<name> working tree beside the top-level project; otherwise
+# the commit pinned here, fetched at configure. Leaves first, so these pins
+# are the ones a standalone build uses.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bro_deps.cmake)
 
-broimage_sibling(bromath "math headers")
-if(BROIMAGE_WITH_TENSOR)
-    broimage_sibling(brotensor "the tensor adapter")
-endif()
-
-# --- brass dependency (JIT acceleration) ---
-find_package(OpenMP QUIET)
-set(BRASS_DIR "${CMAKE_SOURCE_DIR}/../brass" CACHE PATH
-    "Path to standalone brass repo (set to a missing path to force submodule fallback)")
+option(BROIMAGE_ENABLE_API "Build Bronze JavaScript API" ON)
 # OFF builds the plain C++ kernels only, even when brass is present: what a
 # consumer that wants decode/encode/resize (a thumbnailer) and not a JIT backend
 # in its build passes.
 option(BROIMAGE_WITH_JIT "Accelerate kernels with the brass JIT when brass is available" ON)
-if(BROIMAGE_WITH_JIT AND NOT TARGET brass)
-    if(EXISTS "${BRASS_DIR}/CMakeLists.txt")
-        add_subdirectory("${BRASS_DIR}" "${CMAKE_BINARY_DIR}/brass" EXCLUDE_FROM_ALL)
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brass/CMakeLists.txt")
-        add_subdirectory(third_party/brass EXCLUDE_FROM_ALL)
-    endif()
+
+# bromath, header-only math.
+bro_dependency(bromath GITHUB wlejon/bromath REF 8b511fbd69c014bf0584d2b42e6c96a8cf720f6a TARGET bromath::bromath)
+
+# brass, the JIT backend for the kernels.
+find_package(OpenMP QUIET)
+if(BROIMAGE_WITH_JIT)
+    bro_dependency(brass GITHUB wlejon/brass REF 634e3d5cd3ea27c48e3b820aec3115fb66aae2ec)
+endif()
+
+# bronze, the JavaScript runtime the api binds (it brings brass too). The api
+# is bound across bronze's C++ embed boundary, so it has to build against the
+# bronze the surrounding tree builds against.
+if(BROIMAGE_ENABLE_API)
+    bro_dependency(bronze GITHUB wlejon/bronze REF 15ce4cf5fc25d8afe03882985ae95adcba46a6a9 TARGET bronze_runtime_shared
+                   OPTIONS BRONZE_BUILD_SHARED_RUNTIME=ON BRONZE_BUILD_TESTS=OFF)
+endif()
+
+# brotensor, for the tensor adapter.
+if(BROIMAGE_WITH_TENSOR)
+    bro_dependency(brotensor GITHUB wlejon/brotensor REF a332d9283c1e23b9f39e8ecaa4393f937dd26c0a)
 endif()
 
 
@@ -218,38 +203,8 @@ if(BROIMAGE_WITH_JIT AND TARGET brass)
     endif()
 endif()
 # --- Standalone Bronze JavaScript API ---
-option(BROIMAGE_ENABLE_API "Build Bronze JavaScript API" ON)
+# (BROIMAGE_ENABLE_API is declared with the dependencies above, which add bronze.)
 if(BROIMAGE_ENABLE_API)
-    # bronze, the JavaScript runtime the api binds: a checkout beside this one
-    # (../bronze, with ../brass beside it — bronze resolves and
-    # add_subdirectory()s its own code generator), the layout of a bro tree and
-    # of CI (bronze's .github/actions/checkout-toolchain), or an explicit
-    # -DBRONZE_DIR. No vendored fallback: the api is bound across bronze's C++
-    # embed boundary, so it has to build against the bronze the surrounding
-    # tree builds against. Under bro this block is skipped, bro having added
-    # bronze already.
-    if(NOT TARGET bronze_runtime_shared)
-        set(BRONZE_BUILD_SHARED_RUNTIME ON CACHE BOOL "" FORCE)
-        set(BRONZE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        if(DEFINED BRONZE_DIR AND EXISTS "${BRONZE_DIR}/CMakeLists.txt")
-            # Explicit BRONZE_DIR supplied
-        elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../bronze/CMakeLists.txt")
-            set(BRONZE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../bronze" CACHE PATH "bronze source tree")
-        elseif(EXISTS "${CMAKE_SOURCE_DIR}/../bronze/CMakeLists.txt")
-            # Beside the top-level project: this repo is a third_party/
-            # submodule of the project being built.
-            set(BRONZE_DIR "${CMAKE_SOURCE_DIR}/../bronze" CACHE PATH "bronze source tree")
-        endif()
-
-        if(NOT BRONZE_DIR OR NOT EXISTS "${BRONZE_DIR}/CMakeLists.txt")
-            message(FATAL_ERROR
-                "bronze not found: check it out beside this repository (../bronze, with ../brass beside it) "
-                "or pass -DBRONZE_DIR=<path>.")
-        endif()
-
-        add_subdirectory("${BRONZE_DIR}" "${CMAKE_BINARY_DIR}/bronze-build" EXCLUDE_FROM_ALL)
-    endif()
-
     add_subdirectory(src/api)
 endif()
 

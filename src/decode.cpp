@@ -6,6 +6,8 @@
 
 #include <stb_image.h>
 
+#include "decode_ico.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -192,7 +194,25 @@ bool decode_file(const std::string& path, Image& out, std::string* error) {
     int w = 0, h = 0, channels = 0;
     unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &channels, 4);
     if (!pixels) {
-        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load failed";
+        const char* reason = stbi_failure_reason();
+        // Not a format stb reads: an icon is decoded from memory instead.
+        if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
+            uint8_t head[6] = {};
+            // reserved 0, type 1 (icon) or 2 (cursor)
+            const bool ico = std::fread(head, 1, 6, f) == 6 && head[0] == 0 && head[1] == 0 &&
+                             (head[2] == 1 || head[2] == 2) && head[3] == 0;
+            std::vector<uint8_t> bytes;
+            if (ico && std::fseek(f, 0, SEEK_END) == 0) {
+                const long len = std::ftell(f);
+                if (len > 0 && std::fseek(f, 0, SEEK_SET) == 0) {
+                    bytes.resize(std::size_t(len));
+                    bytes.resize(std::fread(bytes.data(), 1, bytes.size(), f));
+                }
+            }
+            std::fclose(f);
+            if (!bytes.empty() && decode_memory(bytes.data(), bytes.size(), out, error)) return true;
+        }
+        if (error) *error = reason ? reason : "stbi_load failed";
         out.width = 0;
         out.height = 0;
         out.channels = 0;
@@ -209,6 +229,19 @@ bool decode_file(const std::string& path, Image& out, std::string* error) {
 
 bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
                    std::string* error) {
+    // A Windows icon (.ico/.cur): stb has no reader for the container, so the
+    // best entry (largest, then deepest; PNG or BMP inside) is decoded here.
+    if (detail::is_ico(data, size)) {
+        int iw = 0, ih = 0;
+        std::vector<uint8_t> rgba;
+        if (detail::ico_decode(data, size, iw, ih, rgba)) {
+            out.width = iw;
+            out.height = ih;
+            out.channels = 4;
+            out.pixels = std::move(rgba);
+            return true;
+        }
+    }
     int w = 0, h = 0, channels = 0;
     unsigned char* pixels = stbi_load_from_memory(data, static_cast<int>(size),
                                                   &w, &h, &channels, 4);
@@ -231,6 +264,12 @@ bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
 bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
                              int* width, int* height, int* channels) {
     int w = 0, h = 0, c = 0;
+    if (detail::ico_probe(data, size, w, h)) {
+        if (width)    *width    = w;
+        if (height)   *height   = h;
+        if (channels) *channels = 4;
+        return true;
+    }
     if (!stbi_info_from_memory(data, static_cast<int>(size), &w, &h, &c))
         return false;
     if (width)    *width    = w;

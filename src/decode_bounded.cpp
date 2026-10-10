@@ -3,6 +3,7 @@
 
 #include "broimage/decode.h"
 
+#include "decode_ico.h"
 #include "decode_tiff.h"
 
 #include <stb_image.h>
@@ -99,6 +100,18 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         }
         out.width = int(l.width);
         out.height = int(l.height);
+        return true;
+    }
+
+    if (int iw = 0, ih = 0; detail::ico_probe(data, size, iw, ih)) {
+        if (!within(uint64_t(iw), uint64_t(ih), 1)) return false;
+        out.frames.resize(1);
+        if (!detail::ico_decode(data, size, iw, ih, out.frames[0].rgba)) {
+            fail(error, "ICO image could not be decoded", out);
+            return false;
+        }
+        out.width = iw;
+        out.height = ih;
         return true;
     }
 

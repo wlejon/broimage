@@ -37,9 +37,21 @@ Built and tested on Windows, Linux and macOS (x86-64 and arm64).
   and `apply_exif_orientation` exposed for callers holding their own buffers.
   16-bit (`decode_file_u16`, TIFF included) and HDR / float (`decode_file_f32`)
   paths for depth maps and Radiance sources.
+- **HEIF: AVIF and HEIC** (`heif.h`) — a HEIF container reader of broimage's
+  own, written from ISO/IEC 23008-12, MIAF and the AVIF spec: primary item,
+  `iloc` construction methods 0 and 1, grid-derived images, the alpha
+  auxiliary image (and `prem`), `clap`, `irot` / `imir` (reported as the
+  image's EXIF orientation, as HEIF says, not the Exif tag), nclx and ICC
+  `colr`, `pixi`, `clli`, Exif items, thumbnail items (`decode_heif_thumbnail`)
+  and an image sequence's first frame. AV1 pixels come from a decoder the
+  host registers (`set_av1_decoder`; bro uses dav1d) and broimage converts
+  8/10/12-bit 4:2:0/4:2:2/4:4:4/mono YUV to RGBA itself, tone-mapping PQ/HLG
+  to SDR. HEVC is decoded by the operating system only — WIC on Windows
+  (with the Store's HEVC Video Extensions), ImageIO on macOS, none on Linux.
+  `can_decode(type)` says what this machine reads.
 - **EXIF** — `read_exif` (`exif.h`) reads camera, lens, exposure, aperture,
-  ISO, focal length, date taken, GPS and orientation from a JPEG, TIFF, WebP
-  or PNG without decoding pixels.
+  ISO, focal length, date taken, GPS and orientation from a JPEG, TIFF, WebP,
+  PNG or HEIF without decoding pixels.
 - **Bounded and animated decode** — `decode_memory_bounded` reads dimensions
   and frame count from the headers and refuses input over caller-set
   `DecodeLimits` before decoding anything (for untrusted bytes); decodes every

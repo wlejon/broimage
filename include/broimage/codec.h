@@ -81,6 +81,9 @@ void register_codec(const Codec& codec);
 // The registered codec that recognises `data`, or null.
 const Codec* find_registered_codec(const uint8_t* data, std::size_t size);
 
+// Whether a codec of this name ("webp", "svg") is registered.
+bool has_registered_codec(const char* name);
+
 // The frames of `bytes`: an animated GIF or a registered animated format
 // (bro: WebP) frame by frame, any other image as one frame. Null when
 // nothing decodes it (`error` says why). Cheap: it reads the headers and

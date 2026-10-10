@@ -179,6 +179,9 @@ target_sources(broimage PRIVATE
     src/tiff_convert.cpp
     src/exif.cpp
     src/decode_ico.cpp
+    src/heif_parse.cpp
+    src/heif_yuv.cpp
+    src/decode_heif.cpp
     src/encode.cpp
     src/png_text.cpp
     src/color.cpp
@@ -192,6 +195,18 @@ target_sources(broimage PRIVATE
 )
 if(BROIMAGE_WITH_TENSOR)
     target_sources(broimage PRIVATE src/tensor_adapter.cpp)
+endif()
+# HEIC (HEVC) is decoded by the operating system, never by code of ours:
+# WIC on Windows, ImageIO on Apple platforms, nothing elsewhere. AVIF's AV1
+# decoder is the host's (set_av1_decoder; bro registers dav1d).
+if(WIN32)
+    target_sources(broimage PRIVATE src/heif_os_win.cpp)
+    target_link_libraries(broimage PRIVATE windowscodecs ole32 mfplat mfuuid)
+elseif(APPLE)
+    target_sources(broimage PRIVATE src/heif_os_apple.cpp)
+    target_link_libraries(broimage PRIVATE "-framework ImageIO" "-framework CoreGraphics" "-framework CoreFoundation")
+else()
+    target_sources(broimage PRIVATE src/heif_os_none.cpp)
 endif()
 if(TARGET basisu_transcoder)
     target_sources(broimage PRIVATE src/ktx2.cpp)

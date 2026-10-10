@@ -108,10 +108,16 @@ Value imageDecodeOriented(Value, std::span<const Value> args) {
         }
         broimage::decode_memory_oriented(p, n, out, &err);
     }
-    // Oriented decode has the same 1x1 fallback as decode_file, so a failure
-    // still yields a usable image rather than null.
-    return decodeResult(out.width, out.height, out.channels, ev::elements::Uint8,
-                        out.pixels.data(), out.pixels.size(), out.pixels.size());
+    // A failure is an empty image (0 x 0) carrying `error`: why it did not
+    // decode (an AVIF without an AV1 decoder, a HEIC without the OS codec).
+    Value r = decodeResult(out.width, out.height, out.channels, ev::elements::Uint8,
+                           out.pixels.data(), out.pixels.size(), out.pixels.size());
+    if (out.pixels.empty()) {
+        ObjectBuilder ob(r);
+        ob.set("error", err.empty() ? std::string("the image could not be decoded") : err);
+        return ob.build();
+    }
+    return r;
 }
 
 // probeDimensions(bytes) -> { width, height, channels } or null — reads the
@@ -242,6 +248,7 @@ void installDecodeOnto(Value imageObj) {
     b.def("readExifOrientation", 1, imageReadExifOrientation);
     b.def("readExif", 1, imageReadExif);
     b.def("applyExifOrientation", 4, imageApplyExifOrientation);
+    installHeifOnto(b.get());
 }
 
 } // namespace broimage::api

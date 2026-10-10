@@ -7,6 +7,8 @@
 #include "decode_ico.h"
 #include "decode_tiff.h"
 #include "decode_gif.h"
+#include "decode_heif.h"
+#include "heif_parse.h"
 
 #include "broimage/codec.h"
 #include "file_bytes.h"
@@ -106,7 +108,12 @@ bool gif_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) 
     return true;
 }
 
+bool heif_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) {
+    return detail::heif_decode(d, n, out, why);
+}
+
 const OwnDecoder kOwn[] = {
+    {detail::heif_sniff, detail::heif_probe, heif_decode8, nullptr},
     {detail::is_ico, ico_probe, ico_decode, nullptr},
     {detail::is_tiff, tiff_probe, tiff_decode8, tiff_decode16},
     {detail::is_gif, gif_probe, gif_decode8, nullptr},

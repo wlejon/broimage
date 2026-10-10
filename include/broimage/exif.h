@@ -4,9 +4,11 @@
 //
 // EXIF is a TIFF directory structure (IFD0, with the Exif and GPS sub-IFDs
 // hanging off it) embedded in the image file: a JPEG's APP1 "Exif" segment,
-// a WebP's RIFF "EXIF" chunk, a PNG's eXIf chunk, or, for a TIFF, the file's
-// own first IFD. read_exif finds it in any of those and reads the fields
-// below; it never touches pixels.
+// a WebP's RIFF "EXIF" chunk, a PNG's eXIf chunk, a HEIF's Exif item, or,
+// for a TIFF, the file's own first IFD. read_exif finds it in any of those
+// and reads the fields below; it never touches pixels. For a HEIF (AVIF,
+// HEIC) `orientation` is what its irot / imir properties amount to — HEIF
+// readers ignore the Exif tag — 1 when it has neither.
 
 #include <cstddef>
 #include <cstdint>

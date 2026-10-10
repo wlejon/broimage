@@ -7,6 +7,8 @@
 #include "decode_gif.h"
 #include "decode_ico.h"
 #include "decode_tiff.h"
+#include "decode_heif.h"
+#include "heif_parse.h"
 
 #include <stb_image.h>
 
@@ -99,6 +101,25 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
                 return true;
             }
         }
+    }
+
+    if (detail::heif_sniff(data, size)) {
+        int w = 0, h = 0, c = 0;
+        if (!detail::heif_probe(data, size, w, h, c)) {
+            fail(error, "HEIF: the image's size could not be read", out);
+            return false;
+        }
+        if (!within(uint64_t(w), uint64_t(h), 1)) return false;
+        Image img;
+        if (!detail::heif_decode(data, size, img, &why)) {
+            fail(error, why.c_str(), out);
+            return false;
+        }
+        out.width = img.width;
+        out.height = img.height;
+        out.frames.resize(1);
+        out.frames[0].rgba = std::move(img.pixels);
+        return true;
     }
 
     if (detail::is_tiff(data, size)) {

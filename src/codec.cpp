@@ -78,6 +78,14 @@ const Codec* find_registered_codec(const uint8_t* data, std::size_t size) {
     return nullptr;
 }
 
+bool has_registered_codec(const char* name) {
+    if (!name) return false;
+    const int n = g_count.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (std::strcmp(g_codecs[std::size_t(i)].name, name) == 0) return true;
+    return false;
+}
+
 std::unique_ptr<FrameDecoder> open_frames(SharedBytes bytes, std::string* error) {
     if (!bytes || bytes->empty()) {
         if (error) *error = "no data";

@@ -343,6 +343,8 @@ void installOpsOnto(Value imageObj);
 // subject so each translation unit stays small: decode / probe / EXIF,
 // geometric + alpha, and layout / color-matrix / normalize / tiling.
 void installDecodeOnto(Value imageObj);
+// canDecode / decodeSupport / readHeifInfo / decodeThumbnail (native_image_heif.cpp).
+void installHeifOnto(Value imageObj);
 // Animation frames: decodeFrames / openFrames (native_image_frames.cpp).
 void installFramesOnto(Value imageObj);
 void installGeometryOnto(Value imageObj);

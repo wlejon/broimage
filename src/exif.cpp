@@ -7,6 +7,8 @@
 
 #include "file_bytes.h"
 #include "tiff_ifd.h"
+#include "decode_heif.h"
+#include "heif_parse.h"
 
 #include <cctype>
 #include <cmath>
@@ -191,6 +193,7 @@ bool find_exif(const uint8_t* data, std::size_t size, const uint8_t*& tiff, std:
     if (size >= 12 && std::memcmp(data, "RIFF", 4) == 0 && std::memcmp(data + 8, "WEBP", 4) == 0)
         return find_in_webp(data, size, tiff, tiff_size);
     if (std::memcmp(data, "\x89PNG\r\n\x1a\n", 8) == 0) return find_in_png(data, size, tiff, tiff_size);
+    if (detail::heif_sniff(data, size)) return detail::heif_find_exif(data, size, tiff, tiff_size);
     return false;
 }
 
@@ -206,6 +209,8 @@ bool read_exif(const uint8_t* data, std::size_t size, ExifInfo& out) {
     out.make = ascii(r, ifd0, 0x010F);
     out.model = ascii(r, ifd0, 0x0110);
     if (auto o = integer(r,ifd0, 0x0112); o && *o >= 1 && *o <= 8) out.orientation = int(*o);
+    // HEIF orients with irot / imir; the Exif tag in it is to be ignored.
+    if (detail::heif_sniff(data, size)) out.orientation = int(detail::heif_orientation(data, size));
 
     const std::vector<TiffEntry> ex = sub_ifd(r, ifd0, 0x8769);
     if (auto t = real(r, ex, 0x829A); t && *t > 0) {
@@ -246,15 +251,20 @@ bool read_exif_file(const std::string& path, ExifInfo& out) {
 }
 
 ExifOrientation read_exif_orientation(const uint8_t* data, std::size_t size) {
+    // A HEIF's orientation is its irot / imir, Exif item or not.
+    if (detail::heif_sniff(data, size)) return detail::heif_orientation(data, size);
     ExifInfo info;
     if (!read_exif(data, size, info) || !info.orientation) return ExifOrientation::Normal;
     return static_cast<ExifOrientation>(*info.orientation);
 }
 
 ExifOrientation read_exif_orientation_file(const std::string& path) {
-    ExifInfo info;
-    if (!read_exif_file(path, info) || !info.orientation) return ExifOrientation::Normal;
-    return static_cast<ExifOrientation>(*info.orientation);
+    std::vector<uint8_t> bytes;
+    if (!detail::read_file_bytes(path, bytes, 4)) return ExifOrientation::Normal;
+    const bool jpeg = bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8;
+    if (!detail::read_file_bytes(path, bytes, jpeg ? std::size_t(256) * 1024 : ~std::size_t(0)))
+        return ExifOrientation::Normal;
+    return read_exif_orientation(bytes.data(), bytes.size());
 }
 
 } // namespace broimage

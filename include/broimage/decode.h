@@ -10,7 +10,8 @@
 namespace broimage {
 
 // Decode an image file into an RGBA8 buffer: PNG, JPEG, BMP, TGA, PSD, PIC,
-// PNM and HDR via stb_image; ICO/CUR, TIFF and GIF (the first frame) by
+// PNM and HDR via stb_image; ICO/CUR, TIFF, GIF (the first frame) and HEIF
+// (AVIF through a host's AV1 decoder, HEIC through the OS: heif.h) by
 // broimage's own decoders; and whatever the host registered (codec.h: bro
 // adds WebP and SVG), tried first. TIFF reads page 0: uncompressed, LZW (+ horizontal
 // predictor), Deflate, PackBits and JPEG compression; 1/2/4/8/16-bit

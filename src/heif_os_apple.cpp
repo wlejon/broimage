@@ -83,7 +83,7 @@ bool os_heif_decode(const uint8_t* data, std::size_t size, Image& out, bool& ori
     CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     // Core Graphics draws only premultiplied RGBA; it is undone below.
     CGContextRef ctx = CGBitmapContextCreate(out.pixels.data(), w, h, 8, w * 4, srgb,
-                                             kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+                                             uint32_t(kCGImageAlphaPremultipliedLast) | uint32_t(kCGBitmapByteOrder32Big));
     CGColorSpaceRelease(srgb);
     if (!ctx) {
         CGImageRelease(img);

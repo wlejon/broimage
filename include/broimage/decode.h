@@ -9,10 +9,17 @@
 
 namespace broimage {
 
-// Decode an image file (PNG, JPEG, BMP, TGA, GIF, PSD, PIC, PNM via stb_image)
-// into an RGBA8 buffer. Returns true on success. On failure `out` is set to a
-// 1x1 white pixel (matches the bro Image fallback) and `error` (if non-null)
-// receives stb's failure reason.
+// Decode an image file into an RGBA8 buffer: PNG, JPEG, BMP, TGA, GIF (first
+// frame), PSD, PIC, PNM and HDR via stb_image; ICO/CUR and TIFF by broimage's
+// own decoders. TIFF reads page 0: uncompressed, LZW (+ horizontal
+// predictor), Deflate, PackBits and JPEG compression; 1/2/4/8/16-bit
+// samples; gray, RGB(A), palette, CMYK and JPEG YCbCr; strips or tiles;
+// planar configuration 1 or 2 (src/decode_tiff.h has the details). Returns
+// true on success. On failure `out` is emptied (0 x 0) and `error` (if
+// non-null) receives the reason.
+//
+// The pixels are as stored: EXIF orientation is applied only by the
+// *_oriented variants below.
 bool decode_file(const std::string& path, Image& out, std::string* error = nullptr);
 
 // Decode an image from an in-memory byte buffer (e.g. a fetched response body).
@@ -34,9 +41,9 @@ bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
 // and so the decoded size are read from the headers first, and nothing is
 // decoded when they exceed the limits. Every frame of an animated GIF is
 // decoded (composed onto the canvas, as stb_image does); any other format
-// yields its one frame. Besides stb_image's formats this reads baseline
-// uncompressed TIFF (8-bit RGB, RGBA, gray, gray + alpha; strips, either
-// byte order), which is what chafa sends as an iTerm2 inline image.
+// yields its one frame. Every format decode_memory reads is read here,
+// TIFF included (what chafa sends as an iTerm2 inline image); a TIFF's
+// size comes from its first IFD before any strip or tile is decompressed.
 
 struct DecodeLimits {
     int max_width  = 0;          // 0: no limit
@@ -119,17 +126,18 @@ enum class ExifOrientation {
     Rotate90CCW  = 8,
 };
 
-// Inspect a JPEG byte buffer for an EXIF Orientation tag. Returns Normal if
-// the buffer is not JPEG, has no EXIF block, or the tag is missing/invalid.
-// Cheap — only scans the APP1 segment, doesn't touch pixels.
+// The EXIF Orientation tag of a JPEG (APP1), TIFF (its IFD0), WebP (EXIF
+// chunk) or PNG (eXIf chunk), read by read_exif (exif.h). Returns Normal
+// when there is no EXIF block or the tag is missing/invalid. Doesn't touch
+// pixels.
 ExifOrientation read_exif_orientation(const uint8_t* data, std::size_t size);
 
-// As above, by file path. Reads only the first few KB.
+// As above, by file path: a JPEG's head, any other file whole.
 ExifOrientation read_exif_orientation_file(const std::string& path);
 
-// Decode + auto-orient. Same fallback semantics as decode_file/decode_memory
-// on failure. Non-JPEG inputs decode as usual (orientation tag is JPEG-only
-// in practice; TIFF has it too but stb doesn't decode TIFF).
+// Decode + auto-orient: decode_file/decode_memory, then the orientation
+// read_exif_orientation finds, in any container it reads. Same failure
+// semantics as decode_file/decode_memory.
 bool decode_file_oriented(const std::string& path, Image& out,
                           std::string* error = nullptr);
 bool decode_memory_oriented(const uint8_t* data, std::size_t size, Image& out,

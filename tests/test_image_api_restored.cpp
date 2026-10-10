@@ -35,7 +35,7 @@ void broimageTestRestoredSurface() {
         // Every name the drift log lists as missing must be back.
         const names = [
             ["decodeU16", 1], ["decodeF32", 1], ["decodeOriented", 1],
-            ["probeDimensions", 1], ["readExifOrientation", 1], ["applyExifOrientation", 4],
+            ["probeDimensions", 1], ["readExifOrientation", 1], ["readExif", 1], ["applyExifOrientation", 4],
             ["resizeU8", 3], ["resizeF32", 3], ["resizeChwF32", 3], ["letterboxU8", 3],
             ["padU8", 3], ["cropU8", 3], ["centerCropU8", 3],
             ["flipHorizontalU8", 3], ["flipVerticalU8", 3], ["rotate90U8", 3],
@@ -312,6 +312,15 @@ void broimageTestRestoredSurface() {
             if (I.decodeF32(junk) !== null) fail("decodeF32 did not return null on garbage");
             // Non-JPEG / no EXIF reports Normal (1), not 0.
             if (I.readExifOrientation(junk) !== 1) fail("readExifOrientation did not report Normal on garbage");
+            if (I.readExif(junk) !== null) fail("readExif did not return null without EXIF");
+            // A bare EXIF block (a TIFF header and IFD0): Make "Hi", Orientation 3.
+            const exifTiff = new Uint8Array([0x49, 0x49, 0x2A, 0, 8, 0, 0, 0, 2, 0,
+                0x0F, 0x01, 2, 0, 3, 0, 0, 0, 0x48, 0x69, 0, 0,
+                0x12, 0x01, 3, 0, 1, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0]);
+            const ex = I.readExif(exifTiff);
+            if (!ex || ex.make !== "Hi" || ex.orientation !== 3 || ("model" in ex) || ("iso" in ex)) {
+                fail("readExif read " + JSON.stringify(ex));
+            }
 
             // decodeOriented keeps decode_file's 1x1 fallback rather than null.
             const d = I.decodeOriented(junk);

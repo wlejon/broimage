@@ -1,0 +1,34 @@
+#pragma once
+// Internal: a file's bytes (or its first `max` bytes).
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+namespace broimage::detail {
+
+inline bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out, std::size_t max = ~std::size_t(0)) {
+    out.clear();
+#ifdef _MSC_VER
+    std::FILE* f = nullptr;
+    if (fopen_s(&f, path.c_str(), "rb") != 0) f = nullptr;
+#else
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+#endif
+    if (!f) return false;
+    bool ok = std::fseek(f, 0, SEEK_END) == 0;
+    const long len = ok ? std::ftell(f) : -1;
+    ok = len >= 0 && std::fseek(f, 0, SEEK_SET) == 0;
+    if (ok) {
+        std::size_t n = std::size_t(len);
+        if (n > max) n = max;
+        out.resize(n);
+        out.resize(std::fread(out.data(), 1, n, f));
+    }
+    std::fclose(f);
+    return ok;
+}
+
+} // namespace broimage::detail

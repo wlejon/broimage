@@ -25,19 +25,25 @@ Built and tested on Windows, Linux and macOS (x86-64 and arm64).
 
 ## Scope
 
-- **Decode / encode** — stb_image-backed RGBA load (PNG, JPEG, BMP, TGA, GIF,
-  PSD, PIC, PNM) and PNG/JPEG write, from files or in-memory buffers.
+- **Decode / encode** — RGBA load from files or in-memory buffers: PNG, JPEG,
+  BMP, TGA, GIF, PSD, PIC, PNM and HDR through stb_image; ICO/CUR and TIFF
+  through broimage's own decoders (TIFF: page 0; uncompressed, LZW with the
+  horizontal predictor, Deflate, PackBits and JPEG; 1–16-bit gray, RGB(A),
+  palette, CMYK, JPEG YCbCr; strips or tiles, chunky or planar, either byte
+  order). PNG/JPEG write.
   `probe_dimensions_memory` reads width/height/channels from a header without
   decoding pixels. EXIF orientation honored on demand via `decode_file_oriented`
   (phone JPEGs load upright instead of sideways), with `read_exif_orientation`
   and `apply_exif_orientation` exposed for callers holding their own buffers.
-  16-bit (`decode_file_u16`) and HDR / float (`decode_file_f32`) paths for depth
-  maps and Radiance sources.
+  16-bit (`decode_file_u16`, TIFF included) and HDR / float (`decode_file_f32`)
+  paths for depth maps and Radiance sources.
+- **EXIF** — `read_exif` (`exif.h`) reads camera, lens, exposure, aperture,
+  ISO, focal length, date taken, GPS and orientation from a JPEG, TIFF, WebP
+  or PNG without decoding pixels.
 - **Bounded and animated decode** — `decode_memory_bounded` reads dimensions
   and frame count from the headers and refuses input over caller-set
   `DecodeLimits` before decoding anything (for untrusted bytes); decodes every
-  frame of an animated GIF, and baseline uncompressed TIFF besides stb's
-  formats.
+  frame of an animated GIF, and TIFF and ICO besides stb's formats.
 - **KTX2** — `transcode_ktx2` turns a `.ktx2` (ETC1S/BasisLZ or UASTC,
   optionally Zstd-supercompressed) into RGBA8 or BC1/3/4/5/7 mips, through a
   vendored transcode-only slice of basis_universal.

@@ -172,6 +172,10 @@ target_sources(broimage PRIVATE
     src/decode.cpp
     src/decode_bounded.cpp
     src/decode_tiff.cpp
+    src/tiff_ifd.cpp
+    src/tiff_codecs.cpp
+    src/tiff_convert.cpp
+    src/exif.cpp
     src/decode_ico.cpp
     src/encode.cpp
     src/png_text.cpp

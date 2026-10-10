@@ -88,14 +88,15 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
 
     if (detail::is_tiff(data, size)) {
         detail::TiffLayout l;
-        if (!detail::tiff_header(data, size, l) || l.width > 1u << 16 || l.height > 1u << 16) {
-            fail(error, "not a baseline uncompressed 8-bit TIFF", out);
+        std::string why;
+        if (!detail::tiff_layout(data, size, l, &why)) {
+            fail(error, why.c_str(), out);
             return false;
         }
         if (!within(l.width, l.height, 1)) return false;
         out.frames.resize(1);
-        if (!detail::tiff_decode(data, size, l, out.frames[0].rgba)) {
-            fail(error, "TIFF strips are truncated", out);
+        if (!detail::tiff_decode(data, size, l, out.frames[0].rgba, &why)) {
+            fail(error, why.c_str(), out);
             return false;
         }
         out.width = int(l.width);

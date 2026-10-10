@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS // for fopen in the EXIF sniff path
-
 #include "broimage/decode.h"
 
 #include "broimage/buffer.h"
@@ -7,13 +5,16 @@
 #include <stb_image.h>
 
 #include "decode_ico.h"
+#include "decode_tiff.h"
+#include "file_bytes.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -21,50 +22,89 @@ namespace broimage {
 
 namespace {
 
-
-// ---- EXIF orientation reader ----------------------------------------------
+// ---- broimage's own decoders ------------------------------------------------
 //
-// JPEG: SOI (FF D8), then a series of markers. APP1 (FF E1) may contain an
-// EXIF block ("Exif\0\0" + a TIFF header). The orientation tag is tag 0x0112
-// in IFD0; we only need that one field.
+// Formats stb_image has no reader for, tried before it. Each is recognised
+// by its signature; one that recognises the bytes but cannot decode them
+// still lets stb try, and its reason is the one reported if stb fails too.
+// A new format is a row in kOwn.
 
-inline uint16_t read_u16(const uint8_t* p, bool be) {
-    return be ? static_cast<uint16_t>((p[0] << 8) | p[1])
-              : static_cast<uint16_t>((p[1] << 8) | p[0]);
-}
-inline uint32_t read_u32(const uint8_t* p, bool be) {
-    return be ? (uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 |
-                 uint32_t(p[2]) << 8  | uint32_t(p[3]))
-              : (uint32_t(p[3]) << 24 | uint32_t(p[2]) << 16 |
-                 uint32_t(p[1]) << 8  | uint32_t(p[0]));
+struct OwnDecoder {
+    bool (*sniff)(const uint8_t*, std::size_t);
+    bool (*probe)(const uint8_t*, std::size_t, int& w, int& h, int& channels);
+    bool (*decode8)(const uint8_t*, std::size_t, Image& out, std::string* why);
+    bool (*decode16)(const uint8_t*, std::size_t, ImageU16& out, std::string* why);  // may be null
+};
+
+bool ico_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
+    c = 4;
+    return detail::ico_probe(d, n, w, h);
 }
 
-ExifOrientation parse_exif_payload(const uint8_t* exif, std::size_t exif_size) {
-    // exif points at the TIFF header (right after "Exif\0\0").
-    if (exif_size < 8) return ExifOrientation::Normal;
-    const bool be = (exif[0] == 'M' && exif[1] == 'M');
-    const bool le = (exif[0] == 'I' && exif[1] == 'I');
-    if (!be && !le) return ExifOrientation::Normal;
-    if (read_u16(exif + 2, be) != 0x002A) return ExifOrientation::Normal;
-    const uint32_t ifd0_off = read_u32(exif + 4, be);
-    if (std::size_t(ifd0_off) + 2 > exif_size) return ExifOrientation::Normal;
-    const uint16_t n_entries = read_u16(exif + ifd0_off, be);
-    const std::size_t entries_off = std::size_t(ifd0_off) + 2;
-    if (entries_off + std::size_t(n_entries) * 12 > exif_size) {
-        return ExifOrientation::Normal;
+bool ico_decode(const uint8_t* d, std::size_t n, Image& out, std::string* why) {
+    int w = 0, h = 0;
+    std::vector<uint8_t> rgba;
+    if (!detail::ico_decode(d, n, w, h, rgba)) {
+        if (why) *why = "ICO image could not be decoded";
+        return false;
     }
-    for (uint16_t i = 0; i < n_entries; ++i) {
-        const uint8_t* e = exif + entries_off + std::size_t(i) * 12;
-        const uint16_t tag  = read_u16(e + 0, be);
-        const uint16_t type = read_u16(e + 2, be);
-        if (tag == 0x0112 && type == 3) { // SHORT
-            // Value lives in the first 2 bytes of the "value offset" field.
-            const uint16_t v = read_u16(e + 8, be);
-            if (v >= 1 && v <= 8) return static_cast<ExifOrientation>(v);
-            return ExifOrientation::Normal;
-        }
+    out.width = w;
+    out.height = h;
+    out.channels = 4;
+    out.pixels = std::move(rgba);
+    return true;
+}
+
+bool tiff_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
+    detail::TiffLayout l;
+    if (!detail::tiff_layout(d, n, l)) return false;
+    w = int(l.width);
+    h = int(l.height);
+    c = l.channels();
+    return true;
+}
+
+template <class Img>
+bool tiff_decode_into(const uint8_t* d, std::size_t n, Img& out, std::string* why) {
+    detail::TiffLayout l;
+    if (!detail::tiff_layout(d, n, l, why) || !detail::tiff_decode(d, n, l, out.pixels, why)) return false;
+    out.width = int(l.width);
+    out.height = int(l.height);
+    out.channels = 4;
+    return true;
+}
+
+bool tiff_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) {
+    return tiff_decode_into(d, n, out, why);
+}
+
+bool tiff_decode16(const uint8_t* d, std::size_t n, ImageU16& out, std::string* why) {
+    return tiff_decode_into(d, n, out, why);
+}
+
+const OwnDecoder kOwn[] = {
+    {detail::is_ico, ico_probe, ico_decode, nullptr},
+    {detail::is_tiff, tiff_probe, tiff_decode8, tiff_decode16},
+};
+
+const OwnDecoder* own_decoder(const uint8_t* data, std::size_t size) {
+    if (!data) return nullptr;
+    for (const OwnDecoder& d : kOwn)
+        if (d.sniff(data, size)) return &d;
+    return nullptr;
+}
+
+bool fits_int(std::size_t size) { return size <= std::size_t(std::numeric_limits<int>::max()); }
+
+template <class Img>
+bool fail_decode(Img& out, std::string* error, const std::string& own_why, const char* stb_default) {
+    if (error) {
+        const char* r = stbi_failure_reason();
+        *error = !own_why.empty() ? own_why : (r ? r : stb_default);
     }
-    return ExifOrientation::Normal;
+    out = Img{};
+    if constexpr (std::is_same_v<Img, Image>) out.channels = 0;
+    return false;
 }
 
 void mirror_h_inplace(Image& img) {
@@ -114,50 +154,6 @@ void remap_into(Image& img, int new_w, int new_h, Map map) {
 
 } // namespace
 
-ExifOrientation read_exif_orientation(const uint8_t* data, std::size_t size) {
-    if (!data || size < 4) return ExifOrientation::Normal;
-    if (data[0] != 0xFF || data[1] != 0xD8) return ExifOrientation::Normal; // SOI
-    std::size_t i = 2;
-    while (i + 4 <= size) {
-        if (data[i] != 0xFF) return ExifOrientation::Normal;
-        while (i + 1 < size && data[i + 1] == 0xFF) ++i; // fill bytes
-        if (i + 4 > size) break;
-        const uint8_t marker = data[i + 1];
-        if (marker == 0xDA) return ExifOrientation::Normal; // SOS: scan data starts
-        if (marker == 0xD8 || marker == 0xD9 ||
-            (marker >= 0xD0 && marker <= 0xD7)) {
-            i += 2;
-            continue;
-        }
-        const uint16_t seg_len = static_cast<uint16_t>(
-            (data[i + 2] << 8) | data[i + 3]);
-        if (seg_len < 2 || i + 2 + std::size_t(seg_len) > size) {
-            return ExifOrientation::Normal;
-        }
-        if (marker == 0xE1 && seg_len >= 8 &&
-            data[i + 4] == 'E' && data[i + 5] == 'x' &&
-            data[i + 6] == 'i' && data[i + 7] == 'f' &&
-            data[i + 8] == 0x00 && data[i + 9] == 0x00) {
-            const uint8_t* exif = data + i + 10;
-            const std::size_t exif_size = std::size_t(seg_len) - 8;
-            return parse_exif_payload(exif, exif_size);
-        }
-        i += 2 + std::size_t(seg_len);
-    }
-    return ExifOrientation::Normal;
-}
-
-ExifOrientation read_exif_orientation_file(const std::string& path) {
-    // 64 KB is more than enough — phone JPEGs put APP1 right after SOI.
-    constexpr std::size_t k_sniff = 64 * 1024;
-    std::FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) return ExifOrientation::Normal;
-    std::vector<uint8_t> buf(k_sniff);
-    const std::size_t got = std::fread(buf.data(), 1, k_sniff, f);
-    std::fclose(f);
-    return read_exif_orientation(buf.data(), got);
-}
-
 void apply_exif_orientation(Image& img, ExifOrientation orient) {
     if (img.empty() || orient == ExifOrientation::Normal) return;
     const int W = img.width, H = img.height;
@@ -191,68 +187,27 @@ void apply_exif_orientation(Image& img, ExifOrientation orient) {
 }
 
 bool decode_file(const std::string& path, Image& out, std::string* error) {
-    int w = 0, h = 0, channels = 0;
-    unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &channels, 4);
-    if (!pixels) {
-        const char* reason = stbi_failure_reason();
-        // Not a format stb reads: an icon is decoded from memory instead.
-        if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
-            uint8_t head[6] = {};
-            // reserved 0, type 1 (icon) or 2 (cursor)
-            const bool ico = std::fread(head, 1, 6, f) == 6 && head[0] == 0 && head[1] == 0 &&
-                             (head[2] == 1 || head[2] == 2) && head[3] == 0;
-            std::vector<uint8_t> bytes;
-            if (ico && std::fseek(f, 0, SEEK_END) == 0) {
-                const long len = std::ftell(f);
-                if (len > 0 && std::fseek(f, 0, SEEK_SET) == 0) {
-                    bytes.resize(std::size_t(len));
-                    bytes.resize(std::fread(bytes.data(), 1, bytes.size(), f));
-                }
-            }
-            std::fclose(f);
-            if (!bytes.empty() && decode_memory(bytes.data(), bytes.size(), out, error)) return true;
-        }
-        if (error) *error = reason ? reason : "stbi_load failed";
-        out.width = 0;
-        out.height = 0;
+    std::vector<uint8_t> bytes;
+    if (!detail::read_file_bytes(path, bytes)) {
+        if (error) *error = "can't fopen";
+        out = Image{};
         out.channels = 0;
-        out.pixels.clear();
         return false;
     }
-    out.width = w;
-    out.height = h;
-    out.channels = 4;
-    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
-    stbi_image_free(pixels);
-    return true;
+    return decode_memory(bytes.data(), bytes.size(), out, error);
 }
 
 bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
                    std::string* error) {
-    // A Windows icon (.ico/.cur): stb has no reader for the container, so the
-    // best entry (largest, then deepest; PNG or BMP inside) is decoded here.
-    if (detail::is_ico(data, size)) {
-        int iw = 0, ih = 0;
-        std::vector<uint8_t> rgba;
-        if (detail::ico_decode(data, size, iw, ih, rgba)) {
-            out.width = iw;
-            out.height = ih;
-            out.channels = 4;
-            out.pixels = std::move(rgba);
-            return true;
-        }
+    std::string own_why;
+    if (const OwnDecoder* own = own_decoder(data, size)) {
+        if (own->decode8(data, size, out, &own_why)) return true;
     }
+    if (!data || !fits_int(size)) return fail_decode(out, error, own_why, "no data");
     int w = 0, h = 0, channels = 0;
     unsigned char* pixels = stbi_load_from_memory(data, static_cast<int>(size),
                                                   &w, &h, &channels, 4);
-    if (!pixels) {
-        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load_from_memory failed";
-        out.width = 0;
-        out.height = 0;
-        out.channels = 0;
-        out.pixels.clear();
-        return false;
-    }
+    if (!pixels) return fail_decode(out, error, own_why, "stbi_load_from_memory failed");
     out.width = w;
     out.height = h;
     out.channels = 4;
@@ -264,13 +219,9 @@ bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
 bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
                              int* width, int* height, int* channels) {
     int w = 0, h = 0, c = 0;
-    if (detail::ico_probe(data, size, w, h)) {
-        if (width)    *width    = w;
-        if (height)   *height   = h;
-        if (channels) *channels = 4;
-        return true;
-    }
-    if (!stbi_info_from_memory(data, static_cast<int>(size), &w, &h, &c))
+    bool ok = false;
+    if (const OwnDecoder* own = own_decoder(data, size)) ok = own->probe(data, size, w, h, c);
+    if (!ok && (!data || !fits_int(size) || !stbi_info_from_memory(data, static_cast<int>(size), &w, &h, &c)))
         return false;
     if (width)    *width    = w;
     if (height)   *height   = h;
@@ -281,29 +232,26 @@ bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
 // ---- 16-bit / HDR decode ---------------------------------------------------
 
 bool decode_file_u16(const std::string& path, ImageU16& out, std::string* error) {
-    int w = 0, h = 0, channels = 0;
-    stbi_us* pixels = stbi_load_16(path.c_str(), &w, &h, &channels, 4);
-    if (!pixels) {
-        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load_16 failed";
+    std::vector<uint8_t> bytes;
+    if (!detail::read_file_bytes(path, bytes)) {
+        if (error) *error = "can't fopen";
         out = {};
         return false;
     }
-    out.width = w; out.height = h; out.channels = 4;
-    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
-    stbi_image_free(pixels);
-    return true;
+    return decode_memory_u16(bytes.data(), bytes.size(), out, error);
 }
 
 bool decode_memory_u16(const uint8_t* data, std::size_t size, ImageU16& out,
                        std::string* error) {
+    std::string own_why;
+    if (const OwnDecoder* own = own_decoder(data, size); own && own->decode16) {
+        if (own->decode16(data, size, out, &own_why)) return true;
+    }
+    if (!data || !fits_int(size)) return fail_decode(out, error, own_why, "no data");
     int w = 0, h = 0, channels = 0;
     stbi_us* pixels = stbi_load_16_from_memory(data, static_cast<int>(size),
                                                &w, &h, &channels, 4);
-    if (!pixels) {
-        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load_16_from_memory failed";
-        out = {};
-        return false;
-    }
+    if (!pixels) return fail_decode(out, error, own_why, "stbi_load_16_from_memory failed");
     out.width = w; out.height = h; out.channels = 4;
     out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
     stbi_image_free(pixels);
@@ -342,10 +290,14 @@ bool decode_memory_f32(const uint8_t* data, std::size_t size, ImageF32& out,
 
 bool decode_file_oriented(const std::string& path, Image& out,
                           std::string* error) {
-    const ExifOrientation orient = read_exif_orientation_file(path);
-    if (!decode_file(path, out, error)) return false;
-    apply_exif_orientation(out, orient);
-    return true;
+    std::vector<uint8_t> bytes;
+    if (!detail::read_file_bytes(path, bytes)) {
+        if (error) *error = "can't fopen";
+        out = Image{};
+        out.channels = 0;
+        return false;
+    }
+    return decode_memory_oriented(bytes.data(), bytes.size(), out, error);
 }
 
 bool decode_memory_oriented(const uint8_t* data, std::size_t size, Image& out,

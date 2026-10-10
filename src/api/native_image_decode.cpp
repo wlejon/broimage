@@ -13,6 +13,7 @@
 #include "host_image_internal.h"
 
 #include <broimage/decode.h>
+#include <broimage/exif.h>
 
 #include <cstdint>
 #include <span>
@@ -149,6 +150,52 @@ Value imageReadExifOrientation(Value, std::span<const Value> args) {
     return ev::fromDouble(static_cast<double>(static_cast<int>(o)));
 }
 
+// readExif(pathOrBytes) -> { make, model, lensMake, lensModel, exposureTime,
+// exposureTimeText, fNumber, iso, focalLength, focalLength35mm, dateTaken,
+// offsetTime, latitude, longitude, altitude, orientation } with only the
+// fields the file carries, or null when it has no EXIF block. JPEG, TIFF,
+// WebP and PNG.
+Value imageReadExif(Value, std::span<const Value> args) {
+    if (args.empty()) return ev::throwTypeError("readExif(pathOrBytes)");
+    broimage::ExifInfo e;
+    bool ok = false;
+    if (ev::isString(args[0])) {
+        ok = broimage::read_exif_file(resolvePath(ev::toUtf8(args[0])), e);
+    } else {
+        const uint8_t* p = nullptr;
+        size_t n = 0;
+        if (!bytesArg(args[0], p, n)) {
+            return ev::throwTypeError("readExif: expected path string or bytes");
+        }
+        ok = broimage::read_exif(p, n, e);
+    }
+    if (!ok) return ev::null();
+    ObjectBuilder obj;
+    auto str = [&](const char* key, const std::string& v) {
+        if (!v.empty()) obj.set(key, v);
+    };
+    auto num = [&](const char* key, const auto& v) {
+        if (v) obj.set(key, static_cast<double>(*v));
+    };
+    str("make", e.make);
+    str("model", e.model);
+    str("lensMake", e.lens_make);
+    str("lensModel", e.lens_model);
+    num("exposureTime", e.exposure_time);
+    str("exposureTimeText", e.exposure_time_text);
+    num("fNumber", e.f_number);
+    num("iso", e.iso);
+    num("focalLength", e.focal_length);
+    num("focalLength35mm", e.focal_length_35mm);
+    str("dateTaken", e.date_taken);
+    str("offsetTime", e.offset_time);
+    num("latitude", e.latitude);
+    num("longitude", e.longitude);
+    num("altitude", e.altitude);
+    num("orientation", e.orientation);
+    return obj.build();
+}
+
 // applyExifOrientation(pixels, w, h, orient) -> a new
 // { width, height, channels, pixels } with the rotation/flip applied. The
 // transposing orientations swap width and height, which is why this returns a
@@ -193,6 +240,7 @@ void installDecodeOnto(Value imageObj) {
     b.def("decodeOriented", 1, imageDecodeOriented);
     b.def("probeDimensions", 1, imageProbeDimensions);
     b.def("readExifOrientation", 1, imageReadExifOrientation);
+    b.def("readExif", 1, imageReadExif);
     b.def("applyExifOrientation", 4, imageApplyExifOrientation);
 }
 

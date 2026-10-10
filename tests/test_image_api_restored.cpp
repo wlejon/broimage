@@ -1,5 +1,5 @@
 // Coverage for the bro.image members the QuickJS -> bronze port dropped
-// (bro's docs/transition-drift.md row E4: the old runtime had 61 keys under
+// (the old runtime had 61 keys under
 // bro.image, the port had 37).
 //
 // Every check runs the kernel on real buffers and asserts the pixels, so a

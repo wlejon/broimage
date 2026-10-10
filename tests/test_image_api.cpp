@@ -20,7 +20,7 @@
     } while (0)
 
 // tests/test_image_api_restored.cpp — the bro.image kernels the bronze port
-// dropped (bro's docs/transition-drift.md row E4).
+// dropped.
 void broimageTestRestoredSurface();
 
 // tests/test_image_api_paths.cpp — setPathResolver: the host's resolver is

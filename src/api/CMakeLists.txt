@@ -3,6 +3,7 @@ add_library(broimage_api STATIC
     host_class.cpp
     native_image_codecs.cpp
     native_image_decode.cpp
+    native_image_frames.cpp
     native_image_geometry.cpp
     native_image_ops.cpp
     native_image_preproc.cpp

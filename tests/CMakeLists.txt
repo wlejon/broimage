@@ -13,6 +13,8 @@ broimage_add_test(broimage_test_smoke           test_smoke.cpp)
 broimage_add_test(broimage_test_decode_encode   test_decode_encode.cpp)
 broimage_add_test(broimage_test_decode_bounded  test_decode_bounded.cpp)
 broimage_add_test(broimage_test_decode_ico      test_decode_ico.cpp)
+broimage_add_test(broimage_test_decode_gif      test_decode_gif.cpp)
+broimage_add_test(broimage_test_codec_registry  test_codec_registry.cpp)
 broimage_add_test(broimage_test_decode_tiff     test_decode_tiff.cpp)
 broimage_add_test(broimage_test_exif            test_exif.cpp)
 broimage_add_test(broimage_test_png_text        test_png_text.cpp)
@@ -38,7 +40,8 @@ if(BROIMAGE_ENABLE_API)
         test_image_api.cpp
         test_image_api_restored.cpp
         test_image_api_ops.cpp
-        test_image_api_paths.cpp)
+        test_image_api_paths.cpp
+        test_image_api_frames.cpp)
     target_include_directories(broimage_test_api PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/api
     )

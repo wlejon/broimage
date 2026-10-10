@@ -31,6 +31,9 @@ void broimageTestPathResolver();
 // called with an options object so GC stress can move its buffers.
 void broimageTestOpsSurface();
 
+// tests/test_image_api_frames.cpp — decodeFrames / openFrames on a GIF.
+void broimageTestFrames();
+
 int main() {
     namespace ev = bronze::embed;
     using namespace bronze::eval;
@@ -213,6 +216,7 @@ int main() {
     broimageTestRestoredSurface();
     broimageTestOpsSurface();
     broimageTestPathResolver();
+    broimageTestFrames();
 
     std::cout << "All broimage Bronze JavaScript API tests passed successfully!" << std::endl;
     return 0;

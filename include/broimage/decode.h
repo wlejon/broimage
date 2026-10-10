@@ -9,9 +9,10 @@
 
 namespace broimage {
 
-// Decode an image file into an RGBA8 buffer: PNG, JPEG, BMP, TGA, GIF (first
-// frame), PSD, PIC, PNM and HDR via stb_image; ICO/CUR and TIFF by broimage's
-// own decoders. TIFF reads page 0: uncompressed, LZW (+ horizontal
+// Decode an image file into an RGBA8 buffer: PNG, JPEG, BMP, TGA, PSD, PIC,
+// PNM and HDR via stb_image; ICO/CUR, TIFF and GIF (the first frame) by
+// broimage's own decoders; and whatever the host registered (codec.h: bro
+// adds WebP and SVG), tried first. TIFF reads page 0: uncompressed, LZW (+ horizontal
 // predictor), Deflate, PackBits and JPEG compression; 1/2/4/8/16-bit
 // samples; gray, RGB(A), palette, CMYK and JPEG YCbCr; strips or tiles;
 // planar configuration 1 or 2 (src/decode_tiff.h has the details). Returns
@@ -39,9 +40,9 @@ bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
 // For untrusted input whose size the caller must cap before paying for it (a
 // terminal decoding what a program sent): the dimensions, the frame count
 // and so the decoded size are read from the headers first, and nothing is
-// decoded when they exceed the limits. Every frame of an animated GIF is
-// decoded (composed onto the canvas, as stb_image does); any other format
-// yields its one frame. Every format decode_memory reads is read here,
+// decoded when they exceed the limits. Every frame of an animated GIF (or a
+// registered animated format, codec.h) is decoded, composed onto the canvas,
+// a frame at a time; any other format yields its one frame. Every format decode_memory reads is read here,
 // TIFF included (what chafa sends as an iTerm2 inline image); a TIFF's
 // size comes from its first IFD before any strip or tile is decompressed.
 

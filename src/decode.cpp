@@ -6,6 +6,9 @@
 
 #include "decode_ico.h"
 #include "decode_tiff.h"
+#include "decode_gif.h"
+
+#include "broimage/codec.h"
 #include "file_bytes.h"
 
 #include <algorithm>
@@ -82,9 +85,31 @@ bool tiff_decode16(const uint8_t* d, std::size_t n, ImageU16& out, std::string* 
     return tiff_decode_into(d, n, out, why);
 }
 
+bool gif_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
+    detail::GifScan s;
+    if (!detail::gif_scan(d, n, s) || s.width <= 0 || s.height <= 0) return false;
+    w = s.width;
+    h = s.height;
+    c = 4;
+    return true;
+}
+
+// The first frame, composed as the frame decoder composes every frame.
+bool gif_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) {
+    std::unique_ptr<FrameDecoder> dec = detail::gif_open(d, n, nullptr, why);
+    AnimationFrame f;
+    if (!dec || !dec->next(f, why)) return false;
+    out.width = dec->width();
+    out.height = dec->height();
+    out.channels = 4;
+    out.pixels = std::move(f.rgba);
+    return true;
+}
+
 const OwnDecoder kOwn[] = {
     {detail::is_ico, ico_probe, ico_decode, nullptr},
     {detail::is_tiff, tiff_probe, tiff_decode8, tiff_decode16},
+    {detail::is_gif, gif_probe, gif_decode8, nullptr},
 };
 
 const OwnDecoder* own_decoder(const uint8_t* data, std::size_t size) {
@@ -200,8 +225,17 @@ bool decode_file(const std::string& path, Image& out, std::string* error) {
 bool decode_memory(const uint8_t* data, std::size_t size, Image& out,
                    std::string* error) {
     std::string own_why;
+    if (const Codec* reg = find_registered_codec(data, size)) {
+        if (reg->decode(data, size, out, &own_why) && !out.pixels.empty()) {
+            out.channels = 4;
+            return true;
+        }
+        out = Image{};
+    }
     if (const OwnDecoder* own = own_decoder(data, size)) {
-        if (own->decode8(data, size, out, &own_why)) return true;
+        std::string why;
+        if (own->decode8(data, size, out, &why)) return true;
+        if (own_why.empty()) own_why = why;
     }
     if (!data || !fits_int(size)) return fail_decode(out, error, own_why, "no data");
     int w = 0, h = 0, channels = 0;
@@ -220,7 +254,10 @@ bool probe_dimensions_memory(const uint8_t* data, std::size_t size,
                              int* width, int* height, int* channels) {
     int w = 0, h = 0, c = 0;
     bool ok = false;
-    if (const OwnDecoder* own = own_decoder(data, size)) ok = own->probe(data, size, w, h, c);
+    if (const Codec* reg = find_registered_codec(data, size); reg && reg->probe)
+        ok = reg->probe(data, size, w, h, c);
+    if (!ok)
+        if (const OwnDecoder* own = own_decoder(data, size)) ok = own->probe(data, size, w, h, c);
     if (!ok && (!data || !fits_int(size) || !stbi_info_from_memory(data, static_cast<int>(size), &w, &h, &c)))
         return false;
     if (width)    *width    = w;

@@ -2,7 +2,9 @@
 // produce is read from the headers and checked before anything is decoded.
 
 #include "broimage/decode.h"
+#include "broimage/codec.h"
 
+#include "decode_gif.h"
 #include "decode_ico.h"
 #include "decode_tiff.h"
 
@@ -10,15 +12,12 @@
 
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 
 namespace broimage {
 
 namespace {
-
-bool is_gif(const uint8_t* data, std::size_t size) {
-    return size >= 6 && std::memcmp(data, "GIF8", 4) == 0 && (data[4] == '7' || data[4] == '9') && data[5] == 'a';
-}
 
 void fail(std::string* error, const char* why, Animation& out) {
     out = Animation{};
@@ -28,41 +27,9 @@ void fail(std::string* error, const char* why, Animation& out) {
 } // namespace
 
 int gif_frame_count(const uint8_t* data, std::size_t size) {
-    if (!data || !is_gif(data, size) || size < 13) return 0;
-    std::size_t p = 13;  // header (6) + logical screen descriptor (7)
-    const uint8_t screen_flags = data[10];
-    if (screen_flags & 0x80) p += 3u * (1u << ((screen_flags & 7) + 1));  // global colour table
-    // Sub-blocks: a size byte and that many bytes, until a zero size.
-    auto skip_sub_blocks = [&](std::size_t& q) {
-        while (q < size) {
-            const uint8_t n = data[q++];
-            if (n == 0) return true;
-            q += n;
-        }
-        return false;
-    };
-    int frames = 0;
-    while (p < size) {
-        const uint8_t block = data[p++];
-        if (block == 0x3B) break;  // trailer
-        if (block == 0x21) {       // extension: label, then sub-blocks
-            if (p >= size) break;
-            ++p;
-            if (!skip_sub_blocks(p)) break;
-        } else if (block == 0x2C) {  // image descriptor
-            if (p + 9 > size) break;
-            const uint8_t flags = data[p + 8];
-            p += 9;
-            if (flags & 0x80) p += 3u * (1u << ((flags & 7) + 1));  // local colour table
-            if (p >= size) break;
-            ++p;  // LZW minimum code size
-            if (!skip_sub_blocks(p)) break;
-            ++frames;
-        } else {
-            break;  // not a GIF block: what follows is not read either
-        }
-    }
-    return frames;
+    detail::GifScan s;
+    if (!data || !detail::gif_scan(data, size, s)) return 0;
+    return s.frames;
 }
 
 bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLimits& limits,
@@ -86,9 +53,56 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         return true;
     };
 
+    // Animations — a GIF, or a registered format with frames (bro: WebP) —
+    // a frame at a time: the frame count from the headers is the bound, and
+    // the decoder holds one canvas, not every frame.
+    const Codec* reg = find_registered_codec(data, size);
+    std::unique_ptr<FrameDecoder> frames;
+    std::string why;
+    if (reg && reg->open_frames)
+        frames = reg->open_frames(std::make_shared<const std::vector<uint8_t>>(data, data + size), &why);
+    else if (detail::is_gif(data, size))
+        frames = detail::gif_open(data, size, nullptr, &why);
+    if (frames) {
+        const int count = frames->frame_count();
+        if (count <= 0) {
+            fail(error, "an animation without frames", out);
+            return false;
+        }
+        if (!within(uint64_t(frames->width()), uint64_t(frames->height()), uint64_t(count))) return false;
+        out.width = frames->width();
+        out.height = frames->height();
+        out.frames.reserve(std::size_t(count));
+        AnimationFrame f;
+        while (int(out.frames.size()) < count && frames->next(f, &why)) out.frames.push_back(std::move(f));
+        if (out.frames.empty()) {
+            fail(error, why.empty() ? "the animation decoded no frame" : why.c_str(), out);
+            return false;
+        }
+        return true;
+    }
+    if (detail::is_gif(data, size) || (reg && reg->open_frames)) {
+        fail(error, why.empty() ? "the animation could not be read" : why.c_str(), out);
+        return false;
+    }
+
+    if (reg && reg->probe) {
+        int w = 0, h = 0, c = 0;
+        if (reg->probe(data, size, w, h, c) && w > 0 && h > 0) {
+            if (!within(uint64_t(w), uint64_t(h), 1)) return false;
+            Image img;
+            if (reg->decode(data, size, img, &why) && img.width == w && img.height == h) {
+                out.width = w;
+                out.height = h;
+                out.frames.resize(1);
+                out.frames[0].rgba = std::move(img.pixels);
+                return true;
+            }
+        }
+    }
+
     if (detail::is_tiff(data, size)) {
         detail::TiffLayout l;
-        std::string why;
         if (!detail::tiff_layout(data, size, l, &why)) {
             fail(error, why.c_str(), out);
             return false;
@@ -121,40 +135,8 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         fail(error, stbi_failure_reason() ? stbi_failure_reason() : "unrecognized image", out);
         return false;
     }
-    const bool gif = is_gif(data, size);
-    const int frames = gif ? gif_frame_count(data, size) : 1;
-    if (frames <= 0) {
-        fail(error, "a GIF without frames", out);
-        return false;
-    }
-    if (!within(uint64_t(w), uint64_t(h), uint64_t(frames))) return false;
+    if (!within(uint64_t(w), uint64_t(h), 1)) return false;
     const std::size_t frame_bytes = std::size_t(w) * std::size_t(h) * 4;
-
-    if (gif && frames > 1) {
-        int* delays = nullptr;
-        int gw = 0, gh = 0, gz = 0, comp = 0;
-        stbi_uc* px = stbi_load_gif_from_memory(data, int(size), &delays, &gw, &gh, &gz, &comp, 4);
-        if (!px || gw != w || gh != h || gz <= 0 || gz > frames) {
-            // stb decoding more frames than the block walk counted would mean
-            // the bound was not the bound: refuse rather than trust it.
-            if (px) stbi_image_free(px);
-            if (delays) stbi_image_free(delays);
-            fail(error, stbi_failure_reason() ? stbi_failure_reason() : "GIF decode failed", out);
-            return false;
-        }
-        out.width = w;
-        out.height = h;
-        out.frames.resize(std::size_t(gz));
-        for (int i = 0; i < gz; ++i) {
-            const stbi_uc* f = px + std::size_t(i) * frame_bytes;
-            out.frames[std::size_t(i)].rgba.assign(f, f + frame_bytes);
-            out.frames[std::size_t(i)].delay_ms = delays ? delays[i] : 0;
-        }
-        stbi_image_free(px);
-        if (delays) stbi_image_free(delays);
-        return true;
-    }
-
     int dw = 0, dh = 0, dc = 0;
     stbi_uc* px = stbi_load_from_memory(data, int(size), &dw, &dh, &dc, 4);
     if (!px || dw != w || dh != h) {

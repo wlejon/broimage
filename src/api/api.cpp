@@ -60,6 +60,7 @@ void installCodecs() {
     // decode / probe / EXIF belong with the encoders: a host that mounts only
     // the codec half still needs decodeF32 and friends.
     installDecodeOnto(img.get());
+    installFramesOnto(img.get());
 }
 
 void installImage() {
@@ -67,6 +68,7 @@ void installImage() {
     installOpsOnto(img.get());
     installCodecsOnto(img.get());
     installDecodeOnto(img.get());
+    installFramesOnto(img.get());
     installGeometryOnto(img.get());
     installPreprocOnto(img.get());
 }

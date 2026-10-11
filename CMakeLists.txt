@@ -109,6 +109,8 @@ if(NOT TARGET stb_image)
     )
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/jpeg_turbo.cmake)
+
 # --- basis_universal transcoder (vendored: KTX2 -> GPU formats) ---
 #
 # Transcode-only slice of BinomialLLC/basis_universal (transcoder/ plus the
@@ -149,9 +151,11 @@ target_include_directories(broimage PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 target_compile_features(broimage PUBLIC cxx_std_20)
+find_package(Threads REQUIRED)
 target_link_libraries(broimage
     PUBLIC
         bromath::bromath
+        Threads::Threads
     PRIVATE
         stb_image
 )
@@ -195,6 +199,10 @@ target_sources(broimage PRIVATE
 )
 if(BROIMAGE_WITH_TENSOR)
     target_sources(broimage PRIVATE src/tensor_adapter.cpp)
+endif()
+target_sources(broimage PRIVATE src/decode_jpeg.cpp src/decode_scaled.cpp src/decode_cr3.cpp)
+if(TARGET broimage_jpeg_turbo)
+    target_link_libraries(broimage PRIVATE broimage_jpeg_turbo)
 endif()
 # HEIC (HEVC) is decoded by the operating system, never by code of ours:
 # WIC on Windows, ImageIO on Apple platforms, nothing elsewhere. AVIF's AV1

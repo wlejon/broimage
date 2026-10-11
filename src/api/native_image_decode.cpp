@@ -15,6 +15,7 @@
 #include <broimage/decode.h>
 #include <broimage/exif.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -120,6 +121,86 @@ Value imageDecodeOriented(Value, std::span<const Value> args) {
     return r;
 }
 
+const char* scaledPathName(broimage::ScaledDecodePath p) {
+    switch (p) {
+        case broimage::ScaledDecodePath::Full: return "full";
+        case broimage::ScaledDecodePath::Dct: return "dct";
+        case broimage::ScaledDecodePath::ExifThumbnail: return "exif-thumbnail";
+        case broimage::ScaledDecodePath::HeifThumbnail: return "heif-thumbnail";
+        case broimage::ScaledDecodePath::RawPreview: return "raw-preview";
+    }
+    return "full";
+}
+
+// decodeScaled(pathOrBytes, { width, height, fit: 'contain' | 'cover',
+// embedded: true }) -> { width, height, channels, pixels, path, dctScale,
+// sourceWidth, sourceHeight, decodedWidth, decodedHeight }: upright RGBA8 the
+// size of the box (never larger than the image), decoded at what that size
+// needs (decode.h's decode_memory_scaled). A failure is an empty image with
+// `error`, as decodeOriented's.
+Value imageDecodeScaled(Value, std::span<const Value> args) {
+    if (args.empty()) return ev::throwTypeError("decodeScaled(pathOrBytes, { width, height, fit, embedded })");
+    broimage::ScaledDecodeOptions o;
+    if (args.size() > 1 && ev::isObject(args[1])) {
+        int32_t w = 0, h = 0;
+        std::string fit;
+        if (!getPropI32(args[1], "width", &w, 0) || !getPropI32(args[1], "height", &h, 0) ||
+            !getPropStr(args[1], "fit", &fit, "contain"))
+            return ev::undefined();
+        if (fit != "contain" && fit != "cover") return ev::throwTypeError("decodeScaled: fit must be 'contain' or 'cover'");
+        o.width = std::max(0, w);
+        o.height = std::max(0, h);
+        o.fit = fit == "cover" ? broimage::ScaleFit::Cover : broimage::ScaleFit::Contain;
+        const Value emb = ev::getProperty(args[1], "embedded");
+        if (!ev::isUndefined(emb) && !ev::isNull(emb)) o.embedded_thumbnail = ev::toBool(emb);
+    }
+    broimage::Image out;
+    broimage::ScaledDecodeInfo info;
+    std::string err;
+    if (ev::isString(args[0])) {
+        broimage::decode_file_scaled(resolvePath(ev::toUtf8(args[0])), o, out, &err, &info);
+    } else {
+        const uint8_t* p = nullptr;
+        size_t n = 0;
+        if (!bytesArg(args[0], p, n)) return ev::throwTypeError("decodeScaled: expected path string or bytes");
+        broimage::decode_memory_scaled(p, n, o, out, &err, &info);
+    }
+    Value r = decodeResult(out.width, out.height, out.channels, ev::elements::Uint8,
+                           out.pixels.data(), out.pixels.size(), out.pixels.size());
+    ObjectBuilder ob(r);
+    if (out.pixels.empty()) {
+        ob.set("error", err.empty() ? std::string("the image could not be decoded") : err);
+        return ob.build();
+    }
+    ob.set("path", std::string(scaledPathName(info.path)));
+    ob.set("dctScale", static_cast<double>(info.dct_scale));
+    ob.set("sourceWidth", static_cast<double>(info.source_width));
+    ob.set("sourceHeight", static_cast<double>(info.source_height));
+    ob.set("decodedWidth", static_cast<double>(info.decoded_width));
+    ob.set("decodedHeight", static_cast<double>(info.decoded_height));
+    return ob.build();
+}
+
+// decodeExifThumbnail(pathOrBytes) -> { width, height, channels, pixels } or
+// null: the camera's own small thumbnail (a JPEG's EXIF one, a CR3's THMB),
+// upright and cropped of its bars. A path reads only the file's head.
+Value imageDecodeExifThumbnail(Value, std::span<const Value> args) {
+    if (args.empty()) return ev::throwTypeError("decodeExifThumbnail(pathOrBytes)");
+    broimage::Image out;
+    bool ok = false;
+    if (ev::isString(args[0])) {
+        ok = broimage::decode_file_exif_thumbnail(resolvePath(ev::toUtf8(args[0])), out);
+    } else {
+        const uint8_t* p = nullptr;
+        size_t n = 0;
+        if (!bytesArg(args[0], p, n)) return ev::throwTypeError("decodeExifThumbnail: expected path string or bytes");
+        ok = broimage::decode_exif_thumbnail(p, n, out);
+    }
+    if (!ok) return ev::null();
+    return decodeResult(out.width, out.height, out.channels, ev::elements::Uint8,
+                        out.pixels.data(), out.pixels.size(), out.pixels.size());
+}
+
 // probeDimensions(bytes) -> { width, height, channels } or null — reads the
 // header only, without decoding any pixels.
 Value imageProbeDimensions(Value, std::span<const Value> args) {
@@ -160,7 +241,7 @@ Value imageReadExifOrientation(Value, std::span<const Value> args) {
 // exposureTimeText, fNumber, iso, focalLength, focalLength35mm, dateTaken,
 // offsetTime, subSecTime, latitude, longitude, altitude, orientation } with only the
 // fields the file carries, or null when it has no EXIF block. JPEG, TIFF,
-// WebP and PNG.
+// WebP, PNG, HEIF and Canon CR3.
 Value imageReadExif(Value, std::span<const Value> args) {
     if (args.empty()) return ev::throwTypeError("readExif(pathOrBytes)");
     broimage::ExifInfo e;
@@ -245,6 +326,8 @@ void installDecodeOnto(Value imageObj) {
     b.def("decodeU16", 1, imageDecodeU16);
     b.def("decodeF32", 1, imageDecodeF32);
     b.def("decodeOriented", 1, imageDecodeOriented);
+    b.def("decodeScaled", 2, imageDecodeScaled);
+    b.def("decodeExifThumbnail", 1, imageDecodeExifThumbnail);
     b.def("probeDimensions", 1, imageProbeDimensions);
     b.def("readExifOrientation", 1, imageReadExifOrientation);
     b.def("readExif", 1, imageReadExif);

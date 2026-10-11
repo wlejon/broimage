@@ -6,6 +6,7 @@
 
 #include "decode_gif.h"
 #include "decode_ico.h"
+#include "decode_jpeg.h"
 #include "decode_tiff.h"
 #include "decode_heif.h"
 #include "heif_parse.h"
@@ -16,6 +17,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace broimage {
 
@@ -137,6 +139,20 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         out.width = int(l.width);
         out.height = int(l.height);
         return true;
+    }
+
+    if (int jw = 0, jh = 0, jc = 0; detail::jpeg_turbo() && detail::jpeg_probe(data, size, jw, jh, jc)) {
+        if (!within(uint64_t(jw), uint64_t(jh), 1)) return false;
+        Image img;
+        std::string why;
+        if (detail::jpeg_decode(data, size, 8, img, &why)) {
+            out.width = img.width;
+            out.height = img.height;
+            out.frames.resize(1);
+            out.frames[0].rgba = std::move(img.pixels);
+            return true;
+        }
+        // What libjpeg-turbo will not read (a 12-bit frame), stb_image may.
     }
 
     if (int iw = 0, ih = 0; detail::ico_probe(data, size, iw, ih)) {

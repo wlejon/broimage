@@ -2,6 +2,8 @@
 
 #include "tiff_codecs.h"
 
+#include "decode_jpeg.h"
+
 #include <stb_image.h>
 
 #include <cstring>
@@ -161,6 +163,25 @@ bool tiff_jpeg(const uint8_t* tables, std::size_t tables_n, const uint8_t* src, 
         }
     }
     s.insert(s.end(), src + i, src + n);
+    // libjpeg-turbo when the build has it, as for a JPEG file; channels as stb
+    // would give them (gray as its luma weights, which keep a gray value).
+    if (Image img; jpeg_decode(s.data(), s.size(), 8, img, nullptr)) {
+        w = img.width;
+        h = img.height;
+        const std::size_t count = std::size_t(w) * std::size_t(h);
+        out.resize(count * std::size_t(channels));
+        for (std::size_t p = 0; p < count; ++p) {
+            const uint8_t* q = img.pixels.data() + p * 4;
+            uint8_t* d = out.data() + p * std::size_t(channels);
+            if (channels >= 3) {
+                std::memcpy(d, q, std::size_t(channels));
+            } else {
+                d[0] = uint8_t((q[0] * 77 + q[1] * 150 + q[2] * 29) >> 8);
+                if (channels == 2) d[1] = q[3];
+            }
+        }
+        return true;
+    }
     if (s.size() > std::size_t(std::numeric_limits<int>::max())) return false;
     int c = 0;
     stbi_uc* px = stbi_load_from_memory(s.data(), int(s.size()), &w, &h, &c, channels);

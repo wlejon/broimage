@@ -7,6 +7,7 @@
 
 #include "file_bytes.h"
 #include "tiff_ifd.h"
+#include "decode_cr3.h"
 #include "decode_heif.h"
 #include "heif_parse.h"
 
@@ -207,7 +208,33 @@ bool find_exif(const uint8_t* data, std::size_t size, const uint8_t*& tiff, std:
         return find_in_webp(data, size, tiff, tiff_size);
     if (std::memcmp(data, "\x89PNG\r\n\x1a\n", 8) == 0) return find_in_png(data, size, tiff, tiff_size);
     if (detail::heif_sniff(data, size)) return detail::heif_find_exif(data, size, tiff, tiff_size);
+    if (detail::Cr3Parts cr3; detail::cr3_parts(data, size, cr3) && cr3.cmt[0] && cr3.cmt[0].size >= 8) {
+        tiff = cr3.cmt[0].data;  // IFD0
+        tiff_size = cr3.cmt[0].size;
+        return true;
+    }
     return false;
+}
+
+bool find_exif_thumbnail(const uint8_t* data, std::size_t size, const uint8_t*& jpeg, std::size_t& jpeg_size) {
+    jpeg = nullptr;
+    jpeg_size = 0;
+    const uint8_t* block = nullptr;
+    std::size_t n = 0;
+    if (!find_exif(data, size, block, n)) return false;
+    TiffReader r;
+    std::vector<TiffEntry> ifd0, ifd1;
+    uint32_t next = 0;
+    if (!r.open(block, n) || !r.read_ifd(r.first_ifd(), ifd0, &next) || !next || !r.read_ifd(next, ifd1))
+        return false;
+    const auto off = integer(r, ifd1, 0x0201);
+    const auto len = integer(r, ifd1, 0x0202);
+    if (!off || !len || *off == 0 || *len < 4 || *off > n || *len > n - *off) return false;
+    const uint8_t* p = block + *off;
+    if (p[0] != 0xFF || p[1] != 0xD8) return false;
+    jpeg = p;
+    jpeg_size = *len;
+    return true;
 }
 
 bool read_exif(const uint8_t* data, std::size_t size, ExifInfo& out) {
@@ -225,33 +252,47 @@ bool read_exif(const uint8_t* data, std::size_t size, ExifInfo& out) {
     // HEIF orients with irot / imir; the Exif tag in it is to be ignored.
     if (detail::heif_sniff(data, size)) out.orientation = int(detail::heif_orientation(data, size));
 
-    const std::vector<TiffEntry> ex = sub_ifd(r, ifd0, 0x8769);
-    if (auto t = real(r, ex, 0x829A); t && *t > 0) {
+    // A CR3 keeps the Exif and GPS IFDs as TIFF blocks of their own, CMT2 and
+    // CMT4, beside IFD0's CMT1, rather than behind IFD0's pointer tags.
+    detail::Cr3Parts cr3;
+    const bool is_cr3 = detail::cr3_parts(data, size, cr3);
+    TiffReader exr = r, gpsr = r;
+    auto own_block = [](TiffReader& rd, const detail::Cr3Span& s, std::vector<TiffEntry>& out) {
+        if (!s || !rd.open(s.data, s.size) || !rd.read_ifd(rd.first_ifd(), out)) out.clear();
+    };
+    std::vector<TiffEntry> ex, gps;
+    if (is_cr3) {
+        own_block(exr, cr3.cmt[1], ex);
+        own_block(gpsr, cr3.cmt[3], gps);
+    } else {
+        ex = sub_ifd(r, ifd0, 0x8769);
+        gps = sub_ifd(r, ifd0, 0x8825);
+    }
+    if (auto t = real(exr, ex, 0x829A); t && *t > 0) {
         out.exposure_time = *t;
         out.exposure_time_text = exposure_text(*t);
     }
-    if (auto f = real(r, ex, 0x829D); f && *f > 0) out.f_number = *f;
-    if (auto iso = integer(r,ex, 0x8827); iso && *iso) out.iso = *iso;
-    else if (auto speed = integer(r,ex, 0x8833); speed && *speed) out.iso = *speed;
-    if (auto fl = real(r, ex, 0x920A); fl && *fl > 0) out.focal_length = *fl;
-    if (auto fl35 = integer(r,ex, 0xA405); fl35 && *fl35) out.focal_length_35mm = double(*fl35);
-    out.lens_make = ascii(r, ex, 0xA433);
-    out.lens_model = ascii(r, ex, 0xA434);
-    out.date_taken = iso_date(ascii(r, ex, 0x9003));
-    if (std::string sub = trim_subsec(ascii(r, ex, 0x9291)); valid_subsec(sub)) {
+    if (auto f = real(exr, ex, 0x829D); f && *f > 0) out.f_number = *f;
+    if (auto iso = integer(exr, ex, 0x8827); iso && *iso) out.iso = *iso;
+    else if (auto speed = integer(exr, ex, 0x8833); speed && *speed) out.iso = *speed;
+    if (auto fl = real(exr, ex, 0x920A); fl && *fl > 0) out.focal_length = *fl;
+    if (auto fl35 = integer(exr, ex, 0xA405); fl35 && *fl35) out.focal_length_35mm = double(*fl35);
+    out.lens_make = ascii(exr, ex, 0xA433);
+    out.lens_model = ascii(exr, ex, 0xA434);
+    out.date_taken = iso_date(ascii(exr, ex, 0x9003));
+    if (std::string sub = trim_subsec(ascii(exr, ex, 0x9291)); valid_subsec(sub)) {
         out.sub_sec_time = sub;
         if (!out.date_taken.empty()) out.date_taken += '.' + sub;
     }
-    if (const std::string off = ascii(r, ex, 0x9011); valid_offset(off)) {
+    if (const std::string off = ascii(exr, ex, 0x9011); valid_offset(off)) {
         out.offset_time = off;
         if (!out.date_taken.empty()) out.date_taken += off;
     }
 
-    const std::vector<TiffEntry> gps = sub_ifd(r, ifd0, 0x8825);
-    out.latitude = gps_coord(r, gps, 1, 2, 'S');
-    out.longitude = gps_coord(r, gps, 3, 4, 'W');
-    if (auto alt = real(r, gps, 6)) {
-        const auto below = integer(r,gps, 5);
+    out.latitude = gps_coord(gpsr, gps, 1, 2, 'S');
+    out.longitude = gps_coord(gpsr, gps, 3, 4, 'W');
+    if (auto alt = real(gpsr, gps, 6)) {
+        const auto below = integer(gpsr, gps, 5);
         out.altitude = below && *below == 1 ? -*alt : *alt;
     }
     return true;
@@ -260,9 +301,11 @@ bool read_exif(const uint8_t* data, std::size_t size, ExifInfo& out) {
 bool read_exif_file(const std::string& path, ExifInfo& out) {
     out = ExifInfo{};
     std::vector<uint8_t> bytes;
-    if (!detail::read_file_bytes(path, bytes, 4)) return false;
+    if (!detail::read_file_bytes(path, bytes, 12)) return false;
     // A JPEG's APP segments come before the scan: its head is enough.
-    const bool jpeg = bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8;
+    // So are a CR3's (its moov, with the CMT blocks, comes before the RAW data).
+    const bool jpeg = (bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8) ||
+                      detail::cr3_sniff(bytes.data(), bytes.size());
     if (!detail::read_file_bytes(path, bytes, jpeg ? std::size_t(256) * 1024 : ~std::size_t(0))) return false;
     return read_exif(bytes.data(), bytes.size(), out);
 }
@@ -277,8 +320,10 @@ ExifOrientation read_exif_orientation(const uint8_t* data, std::size_t size) {
 
 ExifOrientation read_exif_orientation_file(const std::string& path) {
     std::vector<uint8_t> bytes;
-    if (!detail::read_file_bytes(path, bytes, 4)) return ExifOrientation::Normal;
-    const bool jpeg = bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8;
+    if (!detail::read_file_bytes(path, bytes, 12)) return ExifOrientation::Normal;
+    // So are a CR3's (its moov, with the CMT blocks, comes before the RAW data).
+    const bool jpeg = (bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8) ||
+                      detail::cr3_sniff(bytes.data(), bytes.size());
     if (!detail::read_file_bytes(path, bytes, jpeg ? std::size_t(256) * 1024 : ~std::size_t(0)))
         return ExifOrientation::Normal;
     return read_exif_orientation(bytes.data(), bytes.size());

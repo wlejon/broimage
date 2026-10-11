@@ -748,6 +748,7 @@ bool can_decode(std::string_view type, std::string* why) {
             {"pgm", "image/x-portable-graymap"}, {"tif", "image/tiff"}, {"tiff", "image/tiff"},
             {"ico", "image/x-icon"}, {"cur", "image/x-icon"}, {"webp", "image/webp"}, {"svg", "image/svg+xml"},
             {"avif", "image/avif"}, {"heic", "image/heic"}, {"heif", "image/heif"}, {"hif", "image/heif"},
+            {"cr3", "image/x-canon-cr3"},
         };
         std::string mime;
         for (const auto& [e, m] : kExt)
@@ -760,7 +761,8 @@ bool can_decode(std::string_view type, std::string* why) {
                                      "image/vnd.adobe.photoshop", "image/vnd.radiance",
                                      "image/x-portable-anymap", "image/x-portable-pixmap",
                                      "image/x-portable-graymap", "image/tiff", "image/x-icon",
-                                     "image/vnd.microsoft.icon"};
+                                     "image/vnd.microsoft.icon",
+                                     "image/x-canon-cr3"};  // its embedded JPEGs
     for (const char* b : kBuiltIn)
         if (t == b) return true;
     if (t == "image/webp" || t == "image/svg+xml") {

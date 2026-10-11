@@ -60,6 +60,12 @@ struct ExifInfo {
 // WebP or PNG. False when there is none.
 bool find_exif(const uint8_t* data, std::size_t size, const uint8_t*& tiff, std::size_t& tiff_size);
 
+// The JPEG thumbnail of an EXIF block's IFD1 (JPEGInterchangeFormat and
+// JPEGInterchangeFormatLength), as a span of `data`. Pixels are not touched;
+// decode_exif_thumbnail (decode.h) decodes it upright. False when there is
+// none or it does not lie within `data`.
+bool find_exif_thumbnail(const uint8_t* data, std::size_t size, const uint8_t*& jpeg, std::size_t& jpeg_size);
+
 // Read the fields above. False (and `out` default) when `data` carries no
 // EXIF block whose header and IFD0 parse; a block whose IFD0 parses yields
 // whatever fields it has, possibly none.

@@ -4,16 +4,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace broimage::detail {
 
+// `path` is UTF-8 (what bro and brothumb pass), opened on Windows through the
+// wide API rather than the ANSI code page, so a photo under "Été" opens.
 inline bool read_file_bytes(const std::string& path, std::vector<uint8_t>& out, std::size_t max = ~std::size_t(0)) {
     out.clear();
 #ifdef _MSC_VER
     std::FILE* f = nullptr;
-    if (fopen_s(&f, path.c_str(), "rb") != 0) f = nullptr;
+    const std::filesystem::path wide(
+        std::u8string_view(reinterpret_cast<const char8_t*>(path.data()), path.size()));
+    if (_wfopen_s(&f, wide.c_str(), L"rb") != 0) f = nullptr;
 #else
     std::FILE* f = std::fopen(path.c_str(), "rb");
 #endif

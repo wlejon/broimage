@@ -4,7 +4,9 @@
 
 #include <stb_image.h>
 
+#include "decode_cr3.h"
 #include "decode_ico.h"
+#include "decode_jpeg.h"
 #include "decode_tiff.h"
 #include "decode_gif.h"
 #include "decode_heif.h"
@@ -112,7 +114,54 @@ bool heif_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why)
     return detail::heif_decode(d, n, out, why);
 }
 
+// JPEG goes to libjpeg-turbo when the build has it (SIMD, against stb's scalar
+// decoder); without it, or for what it will not read, to stb_image.
+bool jpeg_sniff(const uint8_t* d, std::size_t n) { return detail::jpeg_turbo() && detail::is_jpeg(d, n); }
+
+bool jpeg_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
+    if (!detail::jpeg_probe(d, n, w, h, c)) return false;
+    c = c == 1 ? 1 : 3;
+    return true;
+}
+
+bool jpeg_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) {
+    return detail::jpeg_decode(d, n, 8, out, why);
+}
+
+// A Canon CR3 is its embedded full-size JPEG (the preview without one): the
+// RAW data is not decoded. The orientation is CMT1's, read_exif's.
+detail::Cr3Span cr3_jpeg(const uint8_t* d, std::size_t n) {
+    detail::Cr3Parts p;
+    if (!detail::cr3_parts(d, n, p)) return {};
+    return p.full ? p.full : p.preview ? p.preview : p.thumbnail;
+}
+
+bool cr3_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
+    detail::Cr3Parts p;
+    if (!detail::cr3_parts(d, n, p)) return false;
+    if (p.full) return jpeg_probe(p.full.data, p.full.size, w, h, c);
+    if (p.full_width > 0 && p.full_height > 0) {  // only the head of the file
+        w = p.full_width;
+        h = p.full_height;
+        c = 3;
+        return true;
+    }
+    const detail::Cr3Span s = cr3_jpeg(d, n);
+    return s && jpeg_probe(s.data, s.size, w, h, c);
+}
+
+bool cr3_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) {
+    const detail::Cr3Span s = cr3_jpeg(d, n);
+    if (!s) {
+        if (why) *why = "CR3 without an embedded JPEG (RAW decoding is not supported)";
+        return false;
+    }
+    return decode_memory(s.data, s.size, out, why);
+}
+
 const OwnDecoder kOwn[] = {
+    {jpeg_sniff, jpeg_probe, jpeg_decode8, nullptr},
+    {detail::cr3_sniff, cr3_probe, cr3_decode8, nullptr},
     {detail::heif_sniff, detail::heif_probe, heif_decode8, nullptr},
     {detail::is_ico, ico_probe, ico_decode, nullptr},
     {detail::is_tiff, tiff_probe, tiff_decode8, tiff_decode16},

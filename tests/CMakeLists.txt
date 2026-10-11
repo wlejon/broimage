@@ -31,6 +31,16 @@ broimage_add_test(broimage_test_normalize       test_normalize.cpp)
 broimage_add_test(broimage_test_preproc         test_preproc.cpp)
 broimage_add_test(broimage_test_kernels         test_kernels.cpp)
 broimage_add_test(broimage_test_tiling          test_tiling.cpp)
+broimage_add_test(broimage_test_decode_scaled   test_decode_scaled.cpp)
+target_link_libraries(broimage_test_decode_scaled PRIVATE stb_image)
+if(TARGET broimage_jpeg_turbo)
+    target_compile_definitions(broimage_test_decode_scaled PRIVATE BROIMAGE_HAS_JPEG_TURBO=1)
+endif()
+
+# Not a test: it times decodes of the photos it is pointed at.
+add_executable(broimage_bench_jpeg bench_jpeg.cpp)
+target_link_libraries(broimage_bench_jpeg PRIVATE broimage stb_image)
+
 if(TARGET basisu_transcoder)
     broimage_add_test(broimage_test_ktx2        test_ktx2.cpp)
 endif()

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 namespace broimage {
@@ -423,6 +424,116 @@ void resize_hwc_f32_area(const float* src, int sw, int sh, int ch,
     }
 }
 
+// ---- Area / box, 8-bit -------------------------------------------------------
+//
+// The area filter straight on bytes, for a downscale on both axes: the float
+// path's coverage weights in 14-bit fixed point, applied an output row at a
+// time, so a 24 MP photo is never promoted to floats (96 MB of them). A large
+// source splits its output rows across threads.
+
+struct AreaTaps {
+    std::vector<int> start, count;
+    std::vector<std::size_t> offset;
+    std::vector<uint16_t> weights;  // each output's sum is exactly 1 << 14
+};
+
+AreaTaps area_taps(int s, int d) {
+    AreaTaps t;
+    t.start.resize(d);
+    t.count.resize(d);
+    t.offset.resize(d);
+    const double scale = double(s) / double(d);
+    auto cover = [](int k, double a, double b) {
+        return std::max(0.0, std::min(double(k + 1), b) - std::max(double(k), a));
+    };
+    for (int i = 0; i < d; ++i) {
+        const double a = i == 0 ? 0.0 : i * scale;
+        const double b = i == d - 1 ? double(s) : (i + 1) * scale;
+        const int i0 = clampi(int(std::floor(a)), 0, s - 1);
+        int i1 = clampi(int(std::ceil(b)), 0, s);
+        if (i1 <= i0) i1 = i0 + 1;
+        t.start[i] = i0;
+        t.count[i] = i1 - i0;
+        t.offset[i] = t.weights.size();
+        double total = 0;
+        for (int k = i0; k < i1; ++k) total += cover(k, a, b);
+        int given = 0, largest = -1;
+        std::size_t largest_at = t.weights.size();
+        for (int k = i0; k < i1; ++k) {
+            const int q = total > 0 ? int(std::lround(cover(k, a, b) / total * 16384.0)) : (k == i0 ? 16384 : 0);
+            if (q > largest) {
+                largest = q;
+                largest_at = t.weights.size();
+            }
+            given += q;
+            t.weights.push_back(uint16_t(q));
+        }
+        t.weights[largest_at] = uint16_t(int(t.weights[largest_at]) + 16384 - given);
+    }
+    return t;
+}
+
+void area_u8(const uint8_t* src, int sw, int sh, int ch, int src_row,
+             uint8_t* dst, int dw, int dh, int dst_row) {
+    const AreaTaps tx = area_taps(sw, dw);
+    const AreaTaps ty = area_taps(sh, dh);
+    const std::size_t n = std::size_t(dw) * ch;
+    auto band = [&](int y0, int y1) {
+        // A source row's horizontal sums carry 8 fractional bits (<= 65280),
+        // times a 14-bit row weight, summed: at most 255 << 22, in 32 bits.
+        std::vector<uint32_t> acc(n);
+        for (int y = y0; y < y1; ++y) {
+            std::fill(acc.begin(), acc.end(), 0u);
+            for (int k = 0; k < ty.count[y]; ++k) {
+                const uint32_t wy = ty.weights[ty.offset[y] + std::size_t(k)];
+                if (!wy) continue;
+                const uint8_t* s = src + std::size_t(ty.start[y] + k) * std::size_t(src_row);
+                for (int x = 0; x < dw; ++x) {
+                    const uint8_t* sp = s + std::size_t(tx.start[x]) * ch;
+                    const uint16_t* wp = tx.weights.data() + tx.offset[x];
+                    const int taps = tx.count[x];
+                    uint32_t* ap = acc.data() + std::size_t(x) * ch;
+                    if (ch == 4) {
+                        uint32_t s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+                        for (int i = 0; i < taps; ++i, sp += 4) {
+                            const uint32_t w = wp[i];
+                            s0 += sp[0] * w;
+                            s1 += sp[1] * w;
+                            s2 += sp[2] * w;
+                            s3 += sp[3] * w;
+                        }
+                        ap[0] += ((s0 + 32) >> 6) * wy;
+                        ap[1] += ((s1 + 32) >> 6) * wy;
+                        ap[2] += ((s2 + 32) >> 6) * wy;
+                        ap[3] += ((s3 + 32) >> 6) * wy;
+                    } else {
+                        for (int c = 0; c < ch; ++c) {
+                            uint32_t sum = 0;
+                            for (int i = 0; i < taps; ++i) sum += uint32_t(sp[i * ch + c]) * wp[i];
+                            ap[c] += ((sum + 32) >> 6) * wy;
+                        }
+                    }
+                }
+            }
+            uint8_t* d = dst + std::size_t(y) * std::size_t(dst_row);
+            for (std::size_t i = 0; i < n; ++i) d[i] = uint8_t((acc[i] + (1u << 21)) >> 22);
+        }
+    };
+    // Threads only where they pay for themselves: a few megapixels in.
+    const std::size_t work = std::size_t(sw) * std::size_t(sh);
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const int threads = work < (std::size_t(1) << 21) ? 1 : int(std::min({hw, 8u, unsigned(dh)}));
+    if (threads <= 1) {
+        band(0, dh);
+        return;
+    }
+    std::vector<std::thread> pool;
+    for (int t = 1; t < threads; ++t)
+        pool.emplace_back(band, dh * t / threads, dh * (t + 1) / threads);
+    band(0, dh / threads);
+    for (std::thread& th : pool) th.join();
+}
+
 } // namespace
 
 void resize_hwc_f32(const float* src, int sw, int sh, int ch,
@@ -454,6 +565,10 @@ void resize_hwc_u8(const uint8_t* src, int sw, int sh, int ch,
     // implementation; the working-set is bounded by the larger of src or dst.
     const int src_row = resolve_stride(src_stride_bytes, sw, ch);
     const int dst_row = resolve_stride(dst_stride_bytes, dw, ch);
+    if (filter == Filter::Area && dw <= sw && dh <= sh && dw > 0 && dh > 0) {
+        area_u8(src, sw, sh, ch, src_row, dst, dw, dh, dst_row);
+        return;
+    }
     const std::size_t src_n = static_cast<std::size_t>(sw) * sh * ch;
     const std::size_t dst_n = static_cast<std::size_t>(dw) * dh * ch;
     std::vector<float> sf(src_n);

@@ -9,10 +9,12 @@
 
 namespace broimage {
 
-// Decode an image file into an RGBA8 buffer: PNG, JPEG, BMP, TGA, PSD, PIC,
-// PNM and HDR via stb_image; ICO/CUR, TIFF, GIF (the first frame) and HEIF
+// Decode an image file into an RGBA8 buffer: JPEG via libjpeg-turbo (stb_image
+// in a build without it); PNG, BMP, TGA, PSD, PIC, PNM and HDR via stb_image;
+// ICO/CUR, TIFF, GIF (the first frame) and HEIF
 // (AVIF through a host's AV1 decoder, HEIC through the OS: heif.h) by
-// broimage's own decoders; and whatever the host registered (codec.h: bro
+// broimage's own decoders; a Canon CR3 as its embedded full-size JPEG (the
+// RAW data itself is not decoded); and whatever the host registered (codec.h: bro
 // adds WebP and SVG), tried first. TIFF reads page 0: uncompressed, LZW (+ horizontal
 // predictor), Deflate, PackBits and JPEG compression; 1/2/4/8/16-bit
 // samples; gray, RGB(A), palette, CMYK and JPEG YCbCr; strips or tiles;
@@ -149,5 +151,72 @@ bool decode_memory_oriented(const uint8_t* data, std::size_t size, Image& out,
 // No-op for Normal. Exposed so callers that already have a decoded buffer
 // can apply the orientation themselves.
 void apply_exif_orientation(Image& img, ExifOrientation orient);
+
+// ----- Scaled decode ---------------------------------------------------------
+//
+// An image decoded for a box: a thumbnail, or a photo shown on a screen
+// smaller than it. The result is upright (EXIF orientation applied, as
+// decode_memory_oriented does), keeps the aspect ratio, and is the size the
+// box asks for, never larger than the image itself.
+//
+// It costs what that size needs rather than what the file holds. A JPEG
+// decodes through libjpeg-turbo's scaled IDCT at the smallest of 1/8, 2/8,
+// ... 8/8 whose result still covers the target, then an area resize takes it
+// to the target: a 256 px thumbnail of a 24 MP photo decodes at 1/8. When the
+// target is no bigger than a JPEG's EXIF thumbnail (decode_exif_thumbnail)
+// that is used instead, and a HEIF's thumbnail item likewise. A Canon CR3 is
+// never RAW-decoded: the smallest of its embedded JPEGs that covers the target
+// (the 160 x 120 THMB, the 1620 x 1080 PRVW, the full-size one) is, scaled the
+// same way. Any other image is decoded whole and resized.
+
+enum class ScaleFit {
+    Contain,  // the largest size that fits inside the box (a thumbnail, a photo on a screen)
+    Cover,    // the smallest size that covers the box: at least width x height
+};
+
+struct ScaledDecodeOptions {
+    // The box, in upright pixels. 0 leaves that side unconstrained; both 0 is
+    // the image's own size.
+    int width = 0;
+    int height = 0;
+    ScaleFit fit = ScaleFit::Contain;
+    // Whether an embedded thumbnail (a JPEG's EXIF one, a HEIF's thumbnail
+    // item) may stand in when it is at least the target size.
+    bool embedded_thumbnail = true;
+};
+
+enum class ScaledDecodePath {
+    Full,           // decoded whole (any format, or a JPEG asked for its full size)
+    Dct,            // a JPEG decoded at dct_scale/8 by libjpeg-turbo
+    ExifThumbnail,  // the JPEG's EXIF thumbnail
+    HeifThumbnail,  // the HEIF's thumbnail item
+    RawPreview,     // one of a RAW file's embedded JPEGs (CR3: THMB, PRVW or the full-size one)
+};
+
+struct ScaledDecodeInfo {
+    int source_width = 0;   // the image's own size, upright
+    int source_height = 0;
+    int decoded_width = 0;  // what the decoder produced, upright, before the resize
+    int decoded_height = 0;
+    ScaledDecodePath path = ScaledDecodePath::Full;
+    int dct_scale = 8;      // the M of M/8 (Dct only; 8 otherwise)
+};
+
+// False (and `out` empty, `error` set) when the image does not decode.
+bool decode_memory_scaled(const uint8_t* data, std::size_t size, const ScaledDecodeOptions& options,
+                          Image& out, std::string* error = nullptr, ScaledDecodeInfo* info = nullptr);
+bool decode_file_scaled(const std::string& path, const ScaledDecodeOptions& options, Image& out,
+                        std::string* error = nullptr, ScaledDecodeInfo* info = nullptr);
+
+// The thumbnail a JPEG's EXIF block carries (IFD1's JPEGInterchangeFormat:
+// 160 x 120 from most cameras), decoded, upright by the main image's
+// orientation, and cropped to the main image's aspect ratio: a camera pads a
+// 3:2 photo's thumbnail to 4:3 with black bars, which are cut off. A Canon
+// CR3's THMB box (also 160 x 120) likewise. False when there is none or it
+// does not decode.
+bool decode_exif_thumbnail(const uint8_t* data, std::size_t size, Image& out,
+                           std::string* error = nullptr);
+// As above from a file, reading only its head (the first 1 MB at most).
+bool decode_file_exif_thumbnail(const std::string& path, Image& out, std::string* error = nullptr);
 
 } // namespace broimage

@@ -386,6 +386,33 @@ void broimageTestOpsSurface() {
         try { I.warpAffineU8(mov, ref, { srcW: W, srcH: H, dstW: W, dstH: H, channels: 4, matrix: [1, 0, 0] }); } catch (e) { threw = e instanceof TypeError; }
         if (!threw) fail("warpAffineU8 short matrix did not throw TypeError");
         "SUCCESS";
+    )JS", R"JS(
+        // ── sharpness ───────────────────────────────────────────────────────
+        const I = bro.image;
+        const fail = (m) => { throw new Error(m); };
+        // A step edge, 0 | 200 at column 20, grey RGBA: Laplacian +-200 and
+        // Sobel 800 on the two columns beside it.
+        const W = 50, H = 30, px = new Uint8Array(W * H * 4);
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+            const i = (y * W + x) * 4;
+            px[i] = px[i + 1] = px[i + 2] = x < 20 ? 0 : 200;
+            px[i + 3] = 255;
+        }
+        const r = I.sharpness(px, { width: W, height: H, channels: 4 });
+        if (Math.abs(r.laplacianVar - 80000 / (W - 2)) > 1e-6 || Math.abs(r.tenengrad - 1280000 / (W - 2)) > 1e-6 ||
+            r.pixels !== (W - 2) * (H - 2) || !(r.lumaStd > 0) || !(r.lumaMean > 0))
+            fail("sharpness step edge gave " + JSON.stringify(r));
+        // A rect away from the edge is flat.
+        const flat = I.sharpness(px, { width: W, height: H, channels: 4, rect: { x: 25, y: 2, w: 20, h: 20 } });
+        if (flat.laplacianVar !== 0 || flat.tenengrad !== 0 || flat.pixels !== 18 * 18 || flat.lumaMean !== 200)
+            fail("sharpness flat rect gave " + JSON.stringify(flat));
+        // An empty rect counts nothing; a short buffer throws.
+        if (I.sharpness(px, { width: W, height: H, channels: 4, rect: { x: 0, y: 0, w: 0, h: 5 } }).pixels !== 0)
+            fail("sharpness empty rect counted pixels");
+        let threw = false;
+        try { I.sharpness(px, { width: W, height: H + 1, channels: 4 }); } catch (e) { threw = e instanceof RangeError; }
+        if (!threw) fail("sharpness past the end of src did not throw RangeError");
+        "SUCCESS";
     )JS" };
 
     for (const char* script : scripts) {

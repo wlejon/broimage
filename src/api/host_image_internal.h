@@ -350,6 +350,8 @@ void installFramesOnto(Value imageObj);
 void installGeometryOnto(Value imageObj);
 // alignSimilarity / similarityMatrix / warpAffineU8 (native_image_align.cpp).
 void installAlignOnto(Value imageObj);
+// sharpness (native_image_sharpness.cpp).
+void installSharpnessOnto(Value imageObj);
 void installPreprocOnto(Value imageObj);
 
 } // namespace broimage::api

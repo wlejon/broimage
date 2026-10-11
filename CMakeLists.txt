@@ -191,6 +191,7 @@ target_sources(broimage PRIVATE
     src/color.cpp
     src/geometric.cpp
     src/align.cpp
+    src/sharpness.cpp
     src/alpha.cpp
     src/normalize.cpp
     src/preproc.cpp

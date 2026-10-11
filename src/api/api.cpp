@@ -71,6 +71,7 @@ void installImage() {
     installFramesOnto(img.get());
     installGeometryOnto(img.get());
     installAlignOnto(img.get());
+    installSharpnessOnto(img.get());
     installPreprocOnto(img.get());
 }
 

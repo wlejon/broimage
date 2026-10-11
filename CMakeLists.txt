@@ -190,6 +190,7 @@ target_sources(broimage PRIVATE
     src/png_text.cpp
     src/color.cpp
     src/geometric.cpp
+    src/align.cpp
     src/alpha.cpp
     src/normalize.cpp
     src/preproc.cpp

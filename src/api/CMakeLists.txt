@@ -6,6 +6,7 @@ add_library(broimage_api STATIC
     native_image_frames.cpp
     native_image_heif.cpp
     native_image_geometry.cpp
+    native_image_align.cpp
     native_image_ops.cpp
     native_image_preproc.cpp
 )

@@ -344,6 +344,48 @@ void broimageTestOpsSurface() {
         }
 
         "SUCCESS";
+    )JS", R"JS(
+        // ── alignSimilarity / similarityMatrix / warpAffineU8 ───────────────
+        const I = bro.image;
+        const fail = (m) => { throw new Error(m); };
+        const W = 96, H = 72;
+        const ref = new Uint8Array(W * H * 4);
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+            const v = 128 + 60 * Math.sin(x * 0.21 + Math.cos(y * 0.13) * 2) * Math.cos(y * 0.17 - x * 0.05);
+            const i = (y * W + x) * 4;
+            ref[i] = ref[i + 1] = ref[i + 2] = Math.round(v);
+            ref[i + 3] = 255;
+        }
+        const want = { scale: 1.02, rotation: 0.015, tx: 2.6, ty: -1.4 };
+        const m = I.similarityMatrix(want, W / 2, H / 2);
+        if (m.length !== 6) fail("similarityMatrix gave " + m.length + " numbers");
+        // mov(q) = ref(T^-1 q): warp with the inverse of the reference -> moving matrix.
+        const det = m[0] * m[4] - m[1] * m[3];
+        const inv = [m[4] / det, -m[1] / det, 0, -m[3] / det, m[0] / det, 0];
+        inv[2] = -(inv[0] * m[2] + inv[1] * m[5]);
+        inv[5] = -(inv[3] * m[2] + inv[4] * m[5]);
+        const mov = new Uint8Array(W * H * 4);
+        I.warpAffineU8(mov, ref, { srcW: W, srcH: H, dstW: W, dstH: H, channels: 4, matrix: inv,
+                                   filter: "bicubic", fill: [0, 0, 0, 255] });
+        const mask = new Uint8Array(W * H);
+        for (let y = 8; y < H - 8; y++) for (let x = 8; x < W - 8; x++) mask[y * W + x] = 1;
+        const r = I.alignSimilarity(ref, mov, { width: W, height: H, channels: 4, mask, levels: 2 });
+        const off = Math.abs(r.tx - want.tx) + Math.abs(r.ty - want.ty);
+        if (!(off < 0.15) || Math.abs(r.scale - want.scale) > 3e-3 || Math.abs(r.rotation - want.rotation) > 3e-3)
+            fail("alignSimilarity gave " + JSON.stringify(r));
+        if (!(r.ncc > 0.98) || r.matrix.length !== 6 || typeof r.converged !== "boolean")
+            fail("alignSimilarity result shape " + JSON.stringify(r));
+        // An init carries through: from the answer, it stays there.
+        const r2 = I.alignSimilarity(ref, mov, { width: W, height: H, channels: 4, mask, init: r, search: 0 });
+        if (Math.abs(r2.tx - r.tx) > 0.05) fail("alignSimilarity from init moved to " + r2.tx);
+        // Bad arguments throw.
+        let threw = false;
+        try { I.alignSimilarity(ref, mov, { width: W, height: H + 1, channels: 4 }); } catch (e) { threw = e instanceof RangeError; }
+        if (!threw) fail("alignSimilarity past the end of ref did not throw RangeError");
+        threw = false;
+        try { I.warpAffineU8(mov, ref, { srcW: W, srcH: H, dstW: W, dstH: H, channels: 4, matrix: [1, 0, 0] }); } catch (e) { threw = e instanceof TypeError; }
+        if (!threw) fail("warpAffineU8 short matrix did not throw TypeError");
+        "SUCCESS";
     )JS" };
 
     for (const char* script : scripts) {

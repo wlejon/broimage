@@ -348,6 +348,8 @@ void installHeifOnto(Value imageObj);
 // Animation frames: decodeFrames / openFrames (native_image_frames.cpp).
 void installFramesOnto(Value imageObj);
 void installGeometryOnto(Value imageObj);
+// alignSimilarity / similarityMatrix / warpAffineU8 (native_image_align.cpp).
+void installAlignOnto(Value imageObj);
 void installPreprocOnto(Value imageObj);
 
 } // namespace broimage::api

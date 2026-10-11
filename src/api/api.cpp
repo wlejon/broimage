@@ -70,6 +70,7 @@ void installImage() {
     installDecodeOnto(img.get());
     installFramesOnto(img.get());
     installGeometryOnto(img.get());
+    installAlignOnto(img.get());
     installPreprocOnto(img.get());
 }
 

@@ -163,6 +163,19 @@ bool valid_offset(const std::string& s) {
            std::isdigit(uint8_t(s[2])) && s[3] == ':' && std::isdigit(uint8_t(s[4])) && std::isdigit(uint8_t(s[5]));
 }
 
+std::string trim_subsec(std::string s) {
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\0')) s.pop_back();
+    return s;
+}
+
+bool valid_subsec(const std::string& s) {
+    if (s.empty()) return false;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+    }
+    return true;
+}
+
 std::optional<double> gps_coord(const TiffReader& r, const std::vector<TiffEntry>& gps, uint16_t ref_tag,
                                 uint16_t tag, char negative) {
     const TiffEntry* e = tiff_find(gps, tag);
@@ -225,6 +238,10 @@ bool read_exif(const uint8_t* data, std::size_t size, ExifInfo& out) {
     out.lens_make = ascii(r, ex, 0xA433);
     out.lens_model = ascii(r, ex, 0xA434);
     out.date_taken = iso_date(ascii(r, ex, 0x9003));
+    if (std::string sub = trim_subsec(ascii(r, ex, 0x9291)); valid_subsec(sub)) {
+        out.sub_sec_time = sub;
+        if (!out.date_taken.empty()) out.date_taken += '.' + sub;
+    }
     if (const std::string off = ascii(r, ex, 0x9011); valid_offset(off)) {
         out.offset_time = off;
         if (!out.date_taken.empty()) out.date_taken += off;

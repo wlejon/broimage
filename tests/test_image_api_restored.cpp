@@ -318,7 +318,7 @@ void broimageTestRestoredSurface() {
                 0x0F, 0x01, 2, 0, 3, 0, 0, 0, 0x48, 0x69, 0, 0,
                 0x12, 0x01, 3, 0, 1, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0]);
             const ex = I.readExif(exifTiff);
-            if (!ex || ex.make !== "Hi" || ex.orientation !== 3 || ("model" in ex) || ("iso" in ex)) {
+            if (!ex || ex.make !== "Hi" || ex.orientation !== 3 || ("model" in ex) || ("iso" in ex) || ("subSecTime" in ex)) {
                 fail("readExif read " + JSON.stringify(ex));
             }
 

@@ -158,7 +158,7 @@ Value imageReadExifOrientation(Value, std::span<const Value> args) {
 
 // readExif(pathOrBytes) -> { make, model, lensMake, lensModel, exposureTime,
 // exposureTimeText, fNumber, iso, focalLength, focalLength35mm, dateTaken,
-// offsetTime, latitude, longitude, altitude, orientation } with only the
+// offsetTime, subSecTime, latitude, longitude, altitude, orientation } with only the
 // fields the file carries, or null when it has no EXIF block. JPEG, TIFF,
 // WebP and PNG.
 Value imageReadExif(Value, std::span<const Value> args) {
@@ -195,6 +195,7 @@ Value imageReadExif(Value, std::span<const Value> args) {
     num("focalLength35mm", e.focal_length_35mm);
     str("dateTaken", e.date_taken);
     str("offsetTime", e.offset_time);
+    str("subSecTime", e.sub_sec_time);
     num("latitude", e.latitude);
     num("longitude", e.longitude);
     num("altitude", e.altitude);

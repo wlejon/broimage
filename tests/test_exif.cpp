@@ -82,6 +82,7 @@ void check_full(const broimage::ExifInfo& e, const char* where) {
     CHECK(approx(e.focal_length_35mm, 75));
     CHECK(e.date_taken == "2024-05-06T14:30:00+02:00");
     CHECK(e.offset_time == "+02:00");
+    CHECK(e.sub_sec_time.empty());
     CHECK(approx(e.latitude, 40 + 26 / 60.0 + 46.14 / 3600));
     CHECK(approx(e.longitude, -(79 + 58 / 60.0 + 56.04 / 3600)));
     CHECK(approx(e.altitude, -12.5));
@@ -216,8 +217,8 @@ void test_absent_and_missing() {
     CHECK(broimage::read_exif(block.data(), block.size(), e));
     CHECK(e.make == "Nikon" && e.model.empty() && e.lens_model.empty());
     CHECK(!e.exposure_time && e.exposure_time_text.empty() && !e.f_number && !e.iso && !e.focal_length &&
-          !e.focal_length_35mm && e.date_taken.empty() && !e.latitude && !e.longitude && !e.altitude &&
-          !e.orientation);
+          !e.focal_length_35mm && e.date_taken.empty() && e.offset_time.empty() && e.sub_sec_time.empty() &&
+          !e.latitude && !e.longitude && !e.altitude && !e.orientation);
     // A date without an offset; the all-zero placeholder; ISOSpeed fallback;
     // a coordinate without its reference.
     const auto b2 = build_block(true, {},  {},
@@ -250,6 +251,78 @@ void test_absent_and_missing() {
     }
 }
 
+void test_subsec_time() {
+    for (bool le : {true, false}) {
+        // Tag 0x9003, 0x9291 and 0x9011 together.
+        const auto b1 = build_block(le, {}, {},
+                                    {tiffw::ascii(0x9003, "2024:05:06 14:30:00"),
+                                     tiffw::ascii(0x9291, "25"),
+                                     tiffw::ascii(0x9011, "+02:00")},
+                                    {});
+        broimage::ExifInfo e;
+        CHECK(broimage::read_exif(b1.data(), b1.size(), e));
+        CHECK(e.date_taken == "2024-05-06T14:30:00.25+02:00");
+        CHECK(e.sub_sec_time == "25");
+        CHECK(e.offset_time == "+02:00");
+
+        // Negative offset with fraction.
+        const auto b_neg = build_block(le, {}, {},
+                                       {tiffw::ascii(0x9003, "2024:05:06 14:30:00"),
+                                        tiffw::ascii(0x9291, "25"),
+                                        tiffw::ascii(0x9011, "-05:00")},
+                                       {});
+        CHECK(broimage::read_exif(b_neg.data(), b_neg.size(), e));
+        CHECK(e.date_taken == "2024-05-06T14:30:00.25-05:00");
+        CHECK(e.sub_sec_time == "25");
+        CHECK(e.offset_time == "-05:00");
+
+        // SubSec without offset; exact digits kept (no padding or rounding).
+        const auto b2 = build_block(le, {}, {},
+                                    {tiffw::ascii(0x9003, "2024:05:06 14:30:00"),
+                                     tiffw::ascii(0x9291, "005")},
+                                    {});
+        CHECK(broimage::read_exif(b2.data(), b2.size(), e));
+        CHECK(e.date_taken == "2024-05-06T14:30:00.005");
+        CHECK(e.sub_sec_time == "005");
+        CHECK(e.offset_time.empty());
+
+        // Trailing spaces are trimmed.
+        const auto b_spaces = build_block(le, {}, {},
+                                          {tiffw::ascii(0x9003, "2024:05:06 14:30:00"),
+                                           tiffw::ascii(0x9291, "42   "),
+                                           tiffw::ascii(0x9011, "+01:00")},
+                                          {});
+        CHECK(broimage::read_exif(b_spaces.data(), b_spaces.size(), e));
+        CHECK(e.date_taken == "2024-05-06T14:30:00.42+01:00");
+        CHECK(e.sub_sec_time == "42");
+        CHECK(e.offset_time == "+01:00");
+
+        // Trailing NULs in undefined/raw entry trimmed.
+        const auto b_nuls = build_block(le, {}, {},
+                                        {tiffw::ascii(0x9003, "2024:05:06 14:30:00"),
+                                         tiffw::undefined(0x9291, {'8', '5', 0, 0}),
+                                         tiffw::ascii(0x9011, "+01:00")},
+                                        {});
+        CHECK(broimage::read_exif(b_nuls.data(), b_nuls.size(), e));
+        CHECK(e.date_taken == "2024-05-06T14:30:00.85+01:00");
+        CHECK(e.sub_sec_time == "85");
+        CHECK(e.offset_time == "+01:00");
+
+        // Non-digit SubSecTime is ignored.
+        for (const char* bad : {"bad", "25a", " 25", "+25", "-25", "1.5", "   ", ""}) {
+            const auto b_bad = build_block(le, {}, {},
+                                           {tiffw::ascii(0x9003, "2024:05:06 14:30:00"),
+                                            tiffw::ascii(0x9291, bad),
+                                            tiffw::ascii(0x9011, "+02:00")},
+                                           {});
+            CHECK(broimage::read_exif(b_bad.data(), b_bad.size(), e));
+            CHECK(e.date_taken == "2024-05-06T14:30:00+02:00");
+            CHECK(e.sub_sec_time.empty());
+            CHECK(e.offset_time == "+02:00");
+        }
+    }
+}
+
 void test_file() {
     const auto tif = build_block(true, camera(), {});
     const std::string path = "broimage_test_exif.tif";
@@ -271,6 +344,7 @@ int main() {
     test_containers();
     test_exposure_text();
     test_absent_and_missing();
+    test_subsec_time();
     test_file();
     if (g_failed) {
         std::fprintf(stderr, "%d check(s) failed\n", g_failed);

@@ -37,11 +37,13 @@ struct ExifInfo {
     std::optional<double> focal_length_35mm;  // FocalLengthIn35mmFilm (0xA405), when non-zero
 
     // DateTimeOriginal (0x9003) as ISO 8601: "2024-05-06T14:30:00", with
+    // SubSecTimeOriginal (0x9291) fractional seconds ("...00.25") and
     // OffsetTimeOriginal (0x9011) appended when present ("...+02:00"). EXIF
     // times are local; without the offset the zone is unknown. Empty when
     // absent or malformed.
     std::string date_taken;
-    std::string offset_time;  // OffsetTimeOriginal as stored ("+02:00"), or empty
+    std::string offset_time;   // OffsetTimeOriginal as stored ("+02:00"), or empty
+    std::string sub_sec_time;  // SubSecTimeOriginal as stored ("25"), or empty
 
     // GPS, in signed decimal degrees (south and west negative) and metres
     // (below sea level negative). Absent unless the coordinate and its

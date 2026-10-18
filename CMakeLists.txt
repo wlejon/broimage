@@ -192,6 +192,7 @@ target_sources(broimage PRIVATE
     src/geometric.cpp
     src/align.cpp
     src/sharpness.cpp
+    src/motion.cpp
     src/alpha.cpp
     src/normalize.cpp
     src/preproc.cpp
@@ -199,6 +200,12 @@ target_sources(broimage PRIVATE
     src/kernels.cpp
     src/tiling.cpp
 )
+
+# motion.cpp gives lib/kit/motion.js's numbers to the bit: no a * b + c fused
+# into one rounding (a target built with -mfma would contract it).
+if(NOT MSVC)
+    set_source_files_properties(src/motion.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 if(BROIMAGE_WITH_TENSOR)
     target_sources(broimage PRIVATE src/tensor_adapter.cpp)
 endif()

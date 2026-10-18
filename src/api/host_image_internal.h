@@ -352,6 +352,7 @@ void installGeometryOnto(Value imageObj);
 void installAlignOnto(Value imageObj);
 // sharpness (native_image_sharpness.cpp).
 void installSharpnessOnto(Value imageObj);
+void installMotionOnto(Value imageObj);
 void installPreprocOnto(Value imageObj);
 
 } // namespace broimage::api

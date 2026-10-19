@@ -137,8 +137,9 @@ Value encodePngFileValue(Value, std::span<const Value> a) {
     if (!readEncodeArgs(a, 1, "encodePngFile", true, 0, &e)) return ev::undefined();
     std::string path = resolvePath(ev::toUtf8(a[0]));
     if (!resolveViews({&e.px})) return ev::undefined();
-    bool ok = broimage::encode_png_file(path, e.px.data, e.w, e.h, e.c, e.extra);
-    return ev::fromBool(ok);
+    if (!broimage::encode_png_file(path, e.px.data, e.w, e.h, e.c, e.extra))
+        return ev::throwError("encodePngFile: could not write " + path);
+    return ev::fromBool(true);
 }
 
 Value encodePngValue(Value, std::span<const Value> a) {
@@ -158,8 +159,9 @@ Value encodeJpegFileValue(Value, std::span<const Value> a) {
     if (!readEncodeArgs(a, 1, "encodeJpegFile", false, 90, &e)) return ev::undefined();
     std::string path = resolvePath(ev::toUtf8(a[0]));
     if (!resolveViews({&e.px})) return ev::undefined();
-    bool ok = broimage::encode_jpeg_file(path, e.px.data, e.w, e.h, e.c, e.extra);
-    return ev::fromBool(ok);
+    if (!broimage::encode_jpeg_file(path, e.px.data, e.w, e.h, e.c, e.extra))
+        return ev::throwError("encodeJpegFile: could not write " + path);
+    return ev::fromBool(true);
 }
 
 Value encodeJpegValue(Value, std::span<const Value> a) {

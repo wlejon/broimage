@@ -51,15 +51,26 @@ void broimageTestPathResolver() {
     std::filesystem::create_directories(g_scratch);
 
     // 1. Unresolved: "bvfs/..." has no such directory under the CWD, so the
-    //    encoder cannot write and reports false. This is the behaviour a host
-    //    without a resolver keeps.
+    //    encoder cannot write, and throws an Error naming the path (a write
+    //    that fails is never silent). This is the behaviour a host without a
+    //    resolver keeps.
     if (runScript("unresolved encode", R"JS(
         (function() {
             const px = new Uint8Array(4 * 4 * 4).fill(200);
-            return String(bro.image.encodePngFile("bvfs/before.png", px, 4, 4, 4));
+            try { return String(bro.image.encodePngFile("bvfs/before.png", px, 4, 4, 4)); }
+            catch (e) { return (e instanceof Error ? "Error: " : "?: ") + e.message; }
         })()
-    )JS") != "false") {
-        fail("encodePngFile wrote through an unresolved relative path");
+    )JS") != "Error: encodePngFile: could not write bvfs/before.png") {
+        fail("encodePngFile through an unresolved relative path did not throw naming it");
+    }
+    if (runScript("unresolved jpeg encode", R"JS(
+        (function() {
+            const px = new Uint8Array(4 * 4 * 3).fill(200);
+            try { return String(bro.image.encodeJpegFile("bvfs/before.jpg", px, 4, 4, 3, 90)); }
+            catch (e) { return (e instanceof Error ? "Error: " : "?: ") + e.message; }
+        })()
+    )JS") != "Error: encodeJpegFile: could not write bvfs/before.jpg") {
+        fail("encodeJpegFile through an unresolved relative path did not throw naming it");
     }
     if (!g_asked.empty()) fail("the resolver was consulted before it was installed");
 
@@ -117,9 +128,10 @@ void broimageTestPathResolver() {
     if (runScript("cleared resolver", R"JS(
         (function() {
             const px = new Uint8Array(4 * 4 * 4).fill(200);
-            return String(bro.image.encodePngFile("bvfs/after.png", px, 4, 4, 4));
+            try { return String(bro.image.encodePngFile("bvfs/after.png", px, 4, 4, 4)); }
+            catch (e) { return e.message; }
         })()
-    )JS") != "false") {
+    )JS") != "encodePngFile: could not write bvfs/after.png") {
         fail("encodePngFile still resolved after the resolver was cleared");
     }
     if (g_asked.size() != askedWithResolver) {

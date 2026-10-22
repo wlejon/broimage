@@ -107,9 +107,9 @@ Value imageGradient(Value, std::span<const Value> args) {
     std::vector<uint8_t> outBytes;
     broimage::gradient(stops.data(), static_cast<int>(stopCount), n, outBytes);
 
-    Value ab = ev::createArrayBuffer(
-        std::span<const uint8_t>(outBytes.data(), outBytes.size()));
-    return ev::createTypedArrayView(ev::elements::Uint8, ab, 0, static_cast<uint32_t>(outBytes.size()));
+    ev::Persistent ab(ev::createArrayBuffer(
+        std::span<const uint8_t>(outBytes.data(), outBytes.size())));
+    return ev::createTypedArrayView(ev::elements::Uint8, ab.get(), 0, static_cast<uint32_t>(outBytes.size()));
 }
 
 Value imageAlloc(Value, std::span<const Value> args) {
@@ -293,9 +293,9 @@ Value imageReduce(Value, std::span<const Value> args) {
                 counts[idx]++;
             }
         }
-        Value ab = ev::createArrayBuffer(
-            std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(counts.data()), counts.size() * sizeof(uint32_t)));
-        return ev::createTypedArrayView(ev::elements::Uint32, ab, 0, static_cast<uint32_t>(counts.size()));
+        ev::Persistent ab(ev::createArrayBuffer(
+            std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(counts.data()), counts.size() * sizeof(uint32_t))));
+        return ev::createTypedArrayView(ev::elements::Uint32, ab.get(), 0, static_cast<uint32_t>(counts.size()));
     }
     return ev::throwTypeError("reduce: unknown op '" + op + "'");
 }
@@ -893,162 +893,6 @@ Value imageHslToRgb(Value, std::span<const Value> args) {
     return ev::undefined();
 }
 
-// ---------------------------------------------------------------------------
-// 4. Normalization and Layout
-// ---------------------------------------------------------------------------
-
-Value imageNormalize(Value, std::span<const Value> args) {
-    if (args.size() < 8) return ev::throwTypeError("normalize(Y, X, mean, std, N, C, H, W)");
-    TypedArrayView yView, xView;
-    if (!unpackTypedArray(args[0], "Y", &yView)) return ev::undefined();
-    if (!unpackTypedArray(args[1], "X", &xView)) return ev::undefined();
-
-    int32_t n = 0, c = 0, h = 0, w = 0;
-    if (!countArg(args[4], "normalize", "N", &n) || !countArg(args[5], "normalize", "C", &c) ||
-        !countArg(args[6], "normalize", "H", &h) || !countArg(args[7], "normalize", "W", &w))
-        return ev::undefined();
-
-    if (!requireFloat32(yView, "normalize") || !requireFloat32(xView, "normalize"))
-        return ev::undefined();
-    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
-                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w), sizeof(float)});
-    if (!requireBytes(yView, need, "normalize") || !requireBytes(xView, need, "normalize"))
-        return ev::undefined();
-
-    // mean/std must each carry C numbers; a short array used to be read past
-    // its end (a Float32Array by memcpy, a JS array as NaN).
-    std::vector<float> meanBuf(static_cast<size_t>(c));
-    std::vector<float> stdBuf(static_cast<size_t>(c));
-    if (!readFloatArray(args[2], meanBuf.data(), c, "normalize: mean") ||
-        !readFloatArray(args[3], stdBuf.data(), c, "normalize: std"))
-        return ev::undefined();
-
-    if (!resolveViews({&yView, &xView})) return ev::undefined();
-
-    broimage::image_normalize_nchw_f32(
-        reinterpret_cast<const float*>(xView.data),
-        meanBuf.data(), stdBuf.data(),
-        n, c, h, w,
-        reinterpret_cast<float*>(yView.data));
-    return ev::undefined();
-}
-
-Value imageU8ToF32(Value, std::span<const Value> args) {
-    if (args.size() < 3) return ev::throwTypeError("u8ToF32(Y, src, options)");
-    TypedArrayView yView, srcView;
-    if (!unpackTypedArray(args[0], "Y", &yView)) return ev::undefined();
-    if (!unpackTypedArray(args[1], "src", &srcView)) return ev::undefined();
-
-    int32_t n = 1, h = 0, w = 0, c = 3;
-    double scale = 1.0 / 255.0, bias = 0.0;
-    if (!getPropI32(args[2], "n", &n, 1)) return ev::undefined();
-    if (!getPropI32(args[2], "h", &h, 0)) return ev::undefined();
-    if (!getPropI32(args[2], "w", &w, 0)) return ev::undefined();
-    if (!getPropI32(args[2], "c", &c, 3)) return ev::undefined();
-    if (!getPropF64(args[2], "scale", &scale, 1.0 / 255.0)) return ev::undefined();
-    if (!getPropF64(args[2], "bias",  &bias,  0.0)) return ev::undefined();
-
-    if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
-        return ev::throwRangeError("u8ToF32: invalid dimensions");
-    const uint64_t elems = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(h),
-                                   static_cast<uint64_t>(w), static_cast<uint64_t>(c)});
-    if (!requireFloat32(yView, "u8ToF32") || !requireBytes(yView, satMul({elems, 4}), "u8ToF32") ||
-        !requireBytes(srcView, elems, "u8ToF32"))
-        return ev::undefined();
-    if (!resolveViews({&yView, &srcView})) return ev::undefined();
-
-    broimage::u8_nhwc_to_f32_nchw(
-        srcView.data, n, h, w, c,
-        static_cast<float>(scale), static_cast<float>(bias),
-        reinterpret_cast<float*>(yView.data));
-    return ev::undefined();
-}
-
-Value imageF32ToU8(Value, std::span<const Value> args) {
-    if (args.size() < 3) return ev::throwTypeError("f32ToU8(Y, src, options)");
-    TypedArrayView yView, srcView;
-    if (!unpackTypedArray(args[0], "Y", &yView)) return ev::undefined();
-    if (!unpackTypedArray(args[1], "src", &srcView)) return ev::undefined();
-
-    int32_t n = 1, c = 3, h = 0, w = 0;
-    double scale = 255.0, bias = 0.0;
-    if (!getPropI32(args[2], "n", &n, 1)) return ev::undefined();
-    if (!getPropI32(args[2], "c", &c, 3)) return ev::undefined();
-    if (!getPropI32(args[2], "h", &h, 0)) return ev::undefined();
-    if (!getPropI32(args[2], "w", &w, 0)) return ev::undefined();
-    if (!getPropF64(args[2], "scale", &scale, 255.0)) return ev::undefined();
-    if (!getPropF64(args[2], "bias",  &bias,  0.0)) return ev::undefined();
-
-    if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
-        return ev::throwRangeError("f32ToU8: invalid dimensions");
-    const uint64_t elems = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
-                                   static_cast<uint64_t>(h), static_cast<uint64_t>(w)});
-    if (!requireFloat32(srcView, "f32ToU8") || !requireBytes(srcView, satMul({elems, 4}), "f32ToU8") ||
-        !requireBytes(yView, elems, "f32ToU8"))
-        return ev::undefined();
-    if (!resolveViews({&yView, &srcView})) return ev::undefined();
-
-    broimage::f32_nchw_to_u8_nhwc(
-        reinterpret_cast<const float*>(srcView.data), n, c, h, w,
-        static_cast<float>(scale), static_cast<float>(bias),
-        yView.data);
-    return ev::undefined();
-}
-
-Value imageNhwcToNchw(Value, std::span<const Value> args) {
-    if (args.size() < 3) return ev::throwTypeError("nhwcToNchw(Y, src, options)");
-    TypedArrayView yView, srcView;
-    if (!unpackTypedArray(args[0], "Y", &yView)) return ev::undefined();
-    if (!unpackTypedArray(args[1], "src", &srcView)) return ev::undefined();
-
-    int32_t n = 1, h = 0, w = 0, c = 3;
-    if (!getPropI32(args[2], "n", &n, 1)) return ev::undefined();
-    if (!getPropI32(args[2], "h", &h, 0)) return ev::undefined();
-    if (!getPropI32(args[2], "w", &w, 0)) return ev::undefined();
-    if (!getPropI32(args[2], "c", &c, 3)) return ev::undefined();
-
-    if (n <= 0 || h <= 0 || w <= 0 || c <= 0)
-        return ev::throwRangeError("nhwcToNchw: invalid dimensions");
-    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(h),
-                                  static_cast<uint64_t>(w), static_cast<uint64_t>(c), 4});
-    if (!requireFloat32(yView, "nhwcToNchw") || !requireFloat32(srcView, "nhwcToNchw") ||
-        !requireBytes(yView, need, "nhwcToNchw") || !requireBytes(srcView, need, "nhwcToNchw"))
-        return ev::undefined();
-    if (!resolveViews({&yView, &srcView})) return ev::undefined();
-
-    broimage::nhwc_to_nchw_f32(
-        reinterpret_cast<const float*>(srcView.data), n, h, w, c,
-        reinterpret_cast<float*>(yView.data));
-    return ev::undefined();
-}
-
-Value imageNchwToNhwc(Value, std::span<const Value> args) {
-    if (args.size() < 3) return ev::throwTypeError("nchwToNhwc(Y, src, options)");
-    TypedArrayView yView, srcView;
-    if (!unpackTypedArray(args[0], "Y", &yView)) return ev::undefined();
-    if (!unpackTypedArray(args[1], "src", &srcView)) return ev::undefined();
-
-    int32_t n = 1, c = 3, h = 0, w = 0;
-    if (!getPropI32(args[2], "n", &n, 1)) return ev::undefined();
-    if (!getPropI32(args[2], "c", &c, 3)) return ev::undefined();
-    if (!getPropI32(args[2], "h", &h, 0)) return ev::undefined();
-    if (!getPropI32(args[2], "w", &w, 0)) return ev::undefined();
-
-    if (n <= 0 || c <= 0 || h <= 0 || w <= 0)
-        return ev::throwRangeError("nchwToNhwc: invalid dimensions");
-    const uint64_t need = satMul({static_cast<uint64_t>(n), static_cast<uint64_t>(c),
-                                  static_cast<uint64_t>(h), static_cast<uint64_t>(w), 4});
-    if (!requireFloat32(yView, "nchwToNhwc") || !requireFloat32(srcView, "nchwToNhwc") ||
-        !requireBytes(yView, need, "nchwToNhwc") || !requireBytes(srcView, need, "nchwToNhwc"))
-        return ev::undefined();
-    if (!resolveViews({&yView, &srcView})) return ev::undefined();
-
-    broimage::nchw_to_nhwc_f32(
-        reinterpret_cast<const float*>(srcView.data), n, c, h, w,
-        reinterpret_cast<float*>(yView.data));
-    return ev::undefined();
-}
-
 } // namespace
 
 void installOpsOnto(Value imageObj) {
@@ -1085,13 +929,6 @@ void installOpsOnto(Value imageObj) {
     b.def("hsvToRgb", 3, imageHsvToRgb);
     b.def("rgbToHsl", 3, imageRgbToHsl);
     b.def("hslToRgb", 3, imageHslToRgb);
-
-    // Normalization & Layout
-    b.def("normalize", 8, imageNormalize);
-    b.def("u8ToF32", 3, imageU8ToF32);
-    b.def("f32ToU8", 3, imageF32ToU8);
-    b.def("nhwcToNchw", 3, imageNhwcToNchw);
-    b.def("nchwToNhwc", 3, imageNchwToNhwc);
 }
 
 } // namespace broimage::api

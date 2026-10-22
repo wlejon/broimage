@@ -1,5 +1,6 @@
 #include <broimage/version.h>
 #include "../src/api/api.h"
+#include "../src/api/host_class.h"
 #include "embed/embed.h"
 #include "eval/eval.h"
 
@@ -217,6 +218,25 @@ int main() {
     broimageTestOpsSurface();
     broimageTestPathResolver();
     broimageTestFrames();
+
+    // Test HostClass install, re-install, alias, and branded unwrap under GC stress
+    {
+        static broimage::api::HostClass clsA;
+        static broimage::api::HostClass clsB;
+        clsA.install("TestImageHostA", 0, nullptr);
+        clsA.install("TestImageHostA", 0, nullptr); // re-install deletes prior Persistent slots
+        clsA.alias("TestImageHostAAlias");
+        clsB.install("TestImageHostB", 0, nullptr);
+
+        int payloadA = 42;
+        int payloadB = 99;
+        ev::Persistent instA(clsA.make(&payloadA, [](void*) {}));
+        ev::Persistent instB(clsB.make(&payloadB, [](void*) {}));
+        CHECK(clsA.unwrap(instA.get()) == &payloadA);
+        CHECK(clsA.unwrap(instB.get()) == nullptr);
+        CHECK(clsB.unwrap(instB.get()) == &payloadB);
+        CHECK(clsB.unwrap(instA.get()) == nullptr);
+    }
 
     std::cout << "All broimage Bronze JavaScript API tests passed successfully!" << std::endl;
     return 0;

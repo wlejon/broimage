@@ -196,6 +196,7 @@ target_sources(broimage PRIVATE
     src/alpha.cpp
     src/normalize.cpp
     src/preproc.cpp
+    src/preproc_fused.cpp
     src/presets.cpp
     src/kernels.cpp
     src/tiling.cpp

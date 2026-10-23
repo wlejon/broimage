@@ -21,7 +21,18 @@ namespace {
 
 template <typename SliceFn>
 void run_multithreaded_slices(int dst_h, SliceFn&& slice_fn) {
-#ifdef _OPENMP
+    if (dst_h <= 0) return;
+#if BROIMAGE_HAS_BRASS_JIT
+    if (dst_h < 4) {
+        slice_fn(0, dst_h);
+    } else {
+        brass::codegen::parallel_for(0, static_cast<int64_t>(dst_h), [&](int64_t y_start, int64_t y_end) {
+            if (y_start < y_end) {
+                slice_fn(static_cast<int>(y_start), static_cast<int>(y_end));
+            }
+        });
+    }
+#elif defined(_OPENMP)
     int num_threads = omp_get_max_threads();
     if (dst_h < num_threads * 2 || num_threads <= 1) {
         slice_fn(0, dst_h);

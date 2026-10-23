@@ -144,7 +144,8 @@ Value HostClass::make(void* data, ev::HandleDestructor dtor, ev::Finalize when) 
 void HostClass::setStatic(const char* name, Value v) const {
     const Slots* s = slotsIfAny();
     if (!s || !s->ctor) return;
-    s->ctor->set(ev::setProperty(s->ctor->get(), name, v));
+    ev::Persistent valP(v);
+    s->ctor->set(ev::setProperty(s->ctor->get(), name, valP.get()));
 }
 
 Value HostClass::prototype() const {

@@ -25,7 +25,7 @@ broimage::SharedBytes sourceBytes(Value src, const char* fn, bool& threw) {
     threw = false;
     if (ev::isString(src)) {
         auto bytes = std::make_shared<std::vector<uint8_t>>();
-        if (!broimage::detail::read_file_bytes(resolvePath(ev::toUtf8(src)), *bytes)) return nullptr;
+        if (!broimage::detail::read_file_bytes(readPath(ev::toUtf8(src)), *bytes)) return nullptr;
         return bytes;
     }
     ev::TypedArrayInfo info = ev::typedArrayInfo(src);

@@ -35,6 +35,9 @@ void broimageTestOpsSurface();
 // tests/test_image_api_frames.cpp — decodeFrames / openFrames on a GIF.
 void broimageTestFrames();
 
+// tests/test_image_api_gate.cpp — path entry points ask the host's access gate.
+void broimageTestAccessGate();
+
 int main() {
     namespace ev = bronze::embed;
     using namespace bronze::eval;
@@ -218,6 +221,7 @@ int main() {
     broimageTestOpsSurface();
     broimageTestPathResolver();
     broimageTestFrames();
+    broimageTestAccessGate();
 
     // Test HostClass install, re-install, alias, and branded unwrap under GC stress
     {

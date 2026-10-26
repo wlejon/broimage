@@ -330,10 +330,14 @@ inline Value hostArrayOf(size_t count, const std::function<Value(size_t)>& make)
     return arr.get();
 }
 
-// Path resolution for the file entry points (api.h setPathResolver). Every
-// string path a binding hands to a decoder or an encoder goes through this
-// first, so a relative path means what it means to the host's app.
-std::string resolvePath(const std::string& path);
+// Path resolution for the file entry points (api.h setPathResolver), then the
+// host's access gate (embed/embed_access.h; api.h, "Access"), asked with the
+// resolved path absolute and lexically normal. Every string path a binding
+// hands to a decoder goes through readPath first, and to an encoder through
+// writePath. A refusal is thrown (an Error, code EACCES, the path) and never
+// returns, so nothing is opened.
+std::string readPath(const std::string& path);
+std::string writePath(const std::string& path);
 
 Value ensureBroImage();
 void installCodecsOnto(Value imageObj);

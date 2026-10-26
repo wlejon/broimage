@@ -27,7 +27,7 @@ namespace {
 // the argument is neither. A path that cannot be read gives no bytes.
 bool sourceBytes(Value v, const char* who, std::vector<uint8_t>& owned, const uint8_t*& p, size_t& n) {
     if (ev::isString(v)) {
-        detail::read_file_bytes(resolvePath(ev::toUtf8(v)), owned);
+        detail::read_file_bytes(readPath(ev::toUtf8(v)), owned);
         p = owned.data();
         n = owned.size();
         return true;

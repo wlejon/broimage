@@ -1,5 +1,8 @@
 #include "api.h"
 #include "host_image_internal.h"
+#include "embed/embed_access.h"
+
+#include <filesystem>
 
 namespace broimage::api {
 
@@ -10,11 +13,35 @@ std::function<std::string(const std::string&)>& pathResolverSlot() {
     return resolver;
 }
 
-} // namespace
-
 std::string resolvePath(const std::string& path) {
     auto& r = pathResolverSlot();
     return r ? r(path) : path;
+}
+
+// `resolved` once the host's gate allows `kind` on it; throws the refusal.
+std::string gated(std::string resolved, ev::AccessKind kind) {
+    if (!ev::accessGateActive()) return resolved;
+    namespace fs = std::filesystem;
+    fs::path p(std::u8string(resolved.begin(), resolved.end()));
+    std::error_code ec;
+    fs::path abs = fs::absolute(p, ec);
+    if (ec) abs = p;
+    const std::u8string u8 = abs.lexically_normal().u8string();
+    const std::string subject(u8.begin(), u8.end());
+    if (std::string refused = ev::checkAccess(kind, subject); !refused.empty()) {
+        ev::throwAccessError(refused, "EACCES", subject);
+    }
+    return resolved;
+}
+
+} // namespace
+
+std::string readPath(const std::string& path) {
+    return gated(resolvePath(path), ev::AccessKind::Read);
+}
+
+std::string writePath(const std::string& path) {
+    return gated(resolvePath(path), ev::AccessKind::Write);
 }
 
 void setPathResolver(std::function<std::string(const std::string&)> resolver) {

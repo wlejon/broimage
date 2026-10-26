@@ -60,7 +60,8 @@ if(BROIMAGE_ENABLE_API)
         test_image_api_restored.cpp
         test_image_api_ops.cpp
         test_image_api_paths.cpp
-        test_image_api_frames.cpp)
+        test_image_api_frames.cpp
+        test_image_api_gate.cpp)
     target_include_directories(broimage_test_api PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src/api
     )

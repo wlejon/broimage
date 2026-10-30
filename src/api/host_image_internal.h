@@ -356,6 +356,8 @@ void installGeometryOnto(Value imageObj);
 void installAlignOnto(Value imageObj);
 // sharpness (native_image_sharpness.cpp).
 void installSharpnessOnto(Value imageObj);
+// compare (native_image_compare.cpp).
+void installCompareOnto(Value imageObj);
 void installMotionOnto(Value imageObj);
 void installPreprocOnto(Value imageObj);
 

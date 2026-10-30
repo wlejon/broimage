@@ -192,6 +192,7 @@ target_sources(broimage PRIVATE
     src/geometric.cpp
     src/align.cpp
     src/sharpness.cpp
+    src/compare.cpp
     src/motion.cpp
     src/alpha.cpp
     src/normalize.cpp

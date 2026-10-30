@@ -413,6 +413,28 @@ void broimageTestOpsSurface() {
         try { I.sharpness(px, { width: W, height: H + 1, channels: 4 }); } catch (e) { threw = e instanceof RangeError; }
         if (!threw) fail("sharpness past the end of src did not throw RangeError");
         "SUCCESS";
+    )JS", R"JS(
+        // ── compare ─────────────────────────────────────────────────────────
+        const I = bro.image;
+        const fail = (m) => { throw new Error(m); };
+        // b is a with its bottom half's red raised by 12.
+        const W = 32, H = 16, a = new Uint8Array(W * H * 4);
+        for (let i = 0; i < a.length; i++) a[i] = (i * 37) % 200;
+        const b = a.slice();
+        for (let y = H / 2; y < H; y++) for (let x = 0; x < W; x++) b[(y * W + x) * 4] += 12;
+        const r = I.compare(a, b, { width: W, height: H, channels: 4, rows: 2 });
+        if (r.cells.length !== 2 || r.cells[0].rms !== 0 || r.cells[0].psnr !== Infinity || r.cells[0].ssim !== 1)
+            fail("compare: the top cell differs " + JSON.stringify(r.cells[0]));
+        const bot = r.cells[1];
+        if (bot.y !== 8 || bot.h !== 8 || bot.w !== W || Math.abs(bot.mean[0] - 12) > 1e-9 || bot.mean[1] !== 0 ||
+            Math.abs(bot.rms - 6) > 1e-9 || bot.maxAbs !== 12 || bot.changed !== 1)
+            fail("compare: the bottom cell gave " + JSON.stringify(bot));
+        if (Math.abs(r.mean[0] - 6) > 1e-9 || Math.abs(r.changed - 0.5) > 1e-9 || !(r.ssim > 0.9 && r.ssim <= 1))
+            fail("compare: the whole gave " + JSON.stringify(r));
+        let threw = false;
+        try { I.compare(a, b, { width: W, height: H + 1, channels: 4 }); } catch (e) { threw = e instanceof RangeError; }
+        if (!threw) fail("compare past the end did not throw RangeError");
+        "SUCCESS";
     )JS" };
 
     for (const char* script : scripts) {

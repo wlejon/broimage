@@ -99,6 +99,7 @@ void installImage() {
     installGeometryOnto(img.get());
     installAlignOnto(img.get());
     installSharpnessOnto(img.get());
+    installCompareOnto(img.get());
     installMotionOnto(img.get());
     installPreprocOnto(img.get());
 }

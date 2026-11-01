@@ -212,9 +212,7 @@ if(BROIMAGE_WITH_TENSOR)
     target_sources(broimage PRIVATE src/tensor_adapter.cpp)
 endif()
 target_sources(broimage PRIVATE src/decode_jpeg.cpp src/decode_scaled.cpp src/decode_cr3.cpp)
-if(TARGET broimage_jpeg_turbo)
-    target_link_libraries(broimage PRIVATE broimage_jpeg_turbo)
-endif()
+target_link_libraries(broimage PRIVATE broimage_jpeg_turbo)
 # HEIC (HEVC) is decoded by the operating system, never by code of ours:
 # WIC on Windows, ImageIO on Apple platforms, nothing elsewhere. AVIF's AV1
 # decoder is the host's (set_av1_decoder; bro registers dav1d).

@@ -114,9 +114,9 @@ bool heif_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why)
     return detail::heif_decode(d, n, out, why);
 }
 
-// JPEG goes to libjpeg-turbo when the build has it (SIMD, against stb's scalar
-// decoder); without it, or for what it will not read, to stb_image.
-bool jpeg_sniff(const uint8_t* d, std::size_t n) { return detail::jpeg_turbo() && detail::is_jpeg(d, n); }
+// JPEG goes to libjpeg-turbo (SIMD, against stb's scalar decoder); what it
+// will not read, to stb_image.
+bool jpeg_sniff(const uint8_t* d, std::size_t n) { return detail::is_jpeg(d, n); }
 
 bool jpeg_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
     if (!detail::jpeg_probe(d, n, w, h, c)) return false;

@@ -9,17 +9,14 @@
 # toolchain is active), otherwise the pinned release built from source.
 # BROIMAGE_FETCH_JPEG_TURBO=ON skips the search and builds the pinned source.
 #
-# Defines broimage_jpeg_turbo (an INTERFACE target to link) or, with
-# BROIMAGE_WITH_JPEG_TURBO=OFF, nothing: JPEG then stays with stb_image and a
-# scaled decode is a full decode and a resize.
+# Defines broimage_jpeg_turbo, an INTERFACE target to link.
 
-option(BROIMAGE_WITH_JPEG_TURBO "Decode JPEG with libjpeg-turbo (SIMD, DCT-scaled decode); OFF leaves it to stb_image" ON)
 option(BROIMAGE_FETCH_JPEG_TURBO "Build libjpeg-turbo from its pinned source instead of using an installed one" OFF)
 
 # 3.2.0. Moving it: the tag's commit here, and in bro's cmake/bro_pins.cmake.
 set(BROIMAGE_JPEG_TURBO_REF c85e6b905bf237038faa936dab160ebfc5da0344)
 
-if(NOT BROIMAGE_WITH_JPEG_TURBO OR TARGET broimage_jpeg_turbo)
+if(TARGET broimage_jpeg_turbo)
     return()
 endif()
 
@@ -139,5 +136,4 @@ if(NOT _jt_how)
     set(_jt_how "pinned source ${BROIMAGE_JPEG_TURBO_REF}, built static")
 endif()
 
-target_compile_definitions(broimage_jpeg_turbo INTERFACE BROIMAGE_HAS_JPEG_TURBO=1)
 message(STATUS "broimage: libjpeg-turbo ${_jt_how}")

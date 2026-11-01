@@ -24,13 +24,6 @@ static int g_failed = 0;
     } \
 } while (0)
 
-// Which path a JPEG takes depends on libjpeg-turbo; the sizes do not.
-#if BROIMAGE_HAS_JPEG_TURBO
-#define CHECK_DCT(cond) CHECK(cond)
-#else
-#define CHECK_DCT(cond) do { } while (0)
-#endif
-
 namespace {
 
 using broimage::Image;
@@ -145,14 +138,14 @@ void test_paths() {
     // 48 x 48: bigger than the thumbnail, so the IDCT at 4/8 gives 48 x 32.
     CHECK(scaled(f, 48, 48, broimage::ScaleFit::Contain, true, out, info));
     CHECK(out.width == 48 && out.height == 32);
-    CHECK_DCT(info.path == ScaledDecodePath::Dct && info.dct_scale == 4);
-    CHECK_DCT(info.decoded_width == 48 && info.decoded_height == 32);
+    CHECK(info.path == ScaledDecodePath::Dct && info.dct_scale == 4);
+    CHECK(info.decoded_width == 48 && info.decoded_height == 32);
     CHECK(diff_from_full(f, out) <= 24);
 
     // Cover: at least 48 x 48, so 72 x 48 at 6/8.
     CHECK(scaled(f, 48, 48, broimage::ScaleFit::Cover, true, out, info));
     CHECK(out.width == 72 && out.height == 48);
-    CHECK_DCT(info.path == ScaledDecodePath::Dct && info.dct_scale == 6);
+    CHECK(info.path == ScaledDecodePath::Dct && info.dct_scale == 6);
 
     // 20 x 20 fits in the 40 x 27 of thumbnail left once its bars are cut: red.
     CHECK(scaled(f, 20, 20, broimage::ScaleFit::Contain, true, out, info));
@@ -172,13 +165,13 @@ void test_paths() {
     // The same box with the thumbnail declined: the IDCT at 2/8, then 20 x 13.
     CHECK(scaled(f, 20, 20, broimage::ScaleFit::Contain, false, out, info));
     CHECK(out.width == 20 && out.height == 13);
-    CHECK_DCT(info.path == ScaledDecodePath::Dct && info.dct_scale == 2);
+    CHECK(info.path == ScaledDecodePath::Dct && info.dct_scale == 2);
     CHECK(diff_from_full(f, out) <= 24);
 
     // Width only.
     CHECK(scaled(f, 12, 0, broimage::ScaleFit::Contain, false, out, info));
     CHECK(out.width == 12 && out.height == 8);
-    CHECK_DCT(info.dct_scale == 1);
+    CHECK(info.dct_scale == 1);
 }
 
 void test_orientation() {
@@ -189,7 +182,7 @@ void test_orientation() {
     CHECK(scaled(f, 32, 48, broimage::ScaleFit::Contain, false, out, info));
     CHECK(out.width == 32 && out.height == 48);
     CHECK(info.source_width == H && info.source_height == W);
-    CHECK_DCT(info.path == ScaledDecodePath::Dct && info.dct_scale == 4);
+    CHECK(info.path == ScaledDecodePath::Dct && info.dct_scale == 4);
     CHECK(diff_from_full(f, out) <= 24);
 
     CHECK(scaled(f, 20, 20, broimage::ScaleFit::Contain, true, out, info));
@@ -220,7 +213,7 @@ void test_exif_thumbnail() {
     Image out;
     ScaledDecodeInfo info;
     CHECK(scaled(none, 20, 20, broimage::ScaleFit::Contain, true, out, info));
-    CHECK_DCT(info.path == ScaledDecodePath::Dct);
+    CHECK(info.path == ScaledDecodePath::Dct);
 }
 
 void test_other_formats() {
@@ -350,7 +343,7 @@ void test_cr3() {
     // 64 px: the full-size JPEG, at 6/8 (72 x 48 covers 64 x 43).
     CHECK(scaled(f, 64, 64, broimage::ScaleFit::Contain, true, out, info));
     CHECK(info.path == ScaledDecodePath::RawPreview && out.width == 64 && out.height == 43);
-    CHECK_DCT(info.dct_scale == 6);
+    CHECK(info.dct_scale == 6);
     CHECK(std::abs(red_at_center(out) - 200) < 12);
 
     // Upright by CMT1.

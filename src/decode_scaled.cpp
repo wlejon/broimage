@@ -232,18 +232,16 @@ bool decode_memory_scaled(const uint8_t* data, std::size_t size, const ScaledDec
     if (jpeg && tw > 0) {
         if (from_exif_thumbnail(data, size, options, out, in)) return true;
         Image img;
-        if (detail::jpeg_turbo()) {
-            // The target as stored, and the smallest M/8 that covers it.
-            const int rw = transposes(orient) ? th : tw;
-            const int rh = transposes(orient) ? tw : th;
-            int scale = 1;
-            while (scale < 8 && (detail::jpeg_scaled_size(sw, scale) < rw || detail::jpeg_scaled_size(sh, scale) < rh))
-                ++scale;
-            // On a failure the whole decode below tries again, stb_image included.
-            if (detail::jpeg_decode(data, size, scale, img, nullptr)) {
-                apply_exif_orientation(img, orient);
-                return finish(img, scale == 8 ? ScaledDecodePath::Full : ScaledDecodePath::Dct, scale);
-            }
+        // The target as stored, and the smallest M/8 that covers it.
+        const int rw = transposes(orient) ? th : tw;
+        const int rh = transposes(orient) ? tw : th;
+        int scale = 1;
+        while (scale < 8 && (detail::jpeg_scaled_size(sw, scale) < rw || detail::jpeg_scaled_size(sh, scale) < rh))
+            ++scale;
+        // On a failure the whole decode below tries again, stb_image included.
+        if (detail::jpeg_decode(data, size, scale, img, nullptr)) {
+            apply_exif_orientation(img, orient);
+            return finish(img, scale == 8 ? ScaledDecodePath::Full : ScaledDecodePath::Dct, scale);
         }
     }
 

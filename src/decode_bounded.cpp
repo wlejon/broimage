@@ -141,7 +141,7 @@ bool decode_memory_bounded(const uint8_t* data, std::size_t size, const DecodeLi
         return true;
     }
 
-    if (int jw = 0, jh = 0, jc = 0; detail::jpeg_turbo() && detail::jpeg_probe(data, size, jw, jh, jc)) {
+    if (int jw = 0, jh = 0, jc = 0; detail::jpeg_probe(data, size, jw, jh, jc)) {
         if (!within(uint64_t(jw), uint64_t(jh), 1)) return false;
         Image img;
         std::string why;

@@ -3,12 +3,9 @@
 #include "decode_jpeg.h"
 
 #include <algorithm>
-
-#if BROIMAGE_HAS_JPEG_TURBO
 #include <csetjmp>
 #include <cstdio>
 #include <jpeglib.h>
-#endif
 
 namespace broimage::detail {
 
@@ -45,8 +42,6 @@ bool jpeg_probe(const uint8_t* data, std::size_t size, int& width, int& height, 
     return false;
 }
 
-#if BROIMAGE_HAS_JPEG_TURBO
-
 namespace {
 
 // libjpeg reports a fatal error by calling error_exit, which must not return:
@@ -75,8 +70,6 @@ inline uint8_t mul255(unsigned x, unsigned y) {
 }
 
 } // namespace
-
-bool jpeg_turbo() { return true; }
 
 bool jpeg_decode(const uint8_t* data, std::size_t size, int scale, Image& out, std::string* why) {
     out = Image{};
@@ -146,18 +139,5 @@ bool jpeg_decode(const uint8_t* data, std::size_t size, int scale, Image& out, s
     out.channels = 4;
     return true;
 }
-
-#else
-
-bool jpeg_turbo() { return false; }
-
-bool jpeg_decode(const uint8_t*, std::size_t, int, Image& out, std::string* why) {
-    out = Image{};
-    out.channels = 0;
-    if (why) *why = "this build has no libjpeg-turbo";
-    return false;
-}
-
-#endif
 
 } // namespace broimage::detail

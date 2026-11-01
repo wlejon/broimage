@@ -1,17 +1,13 @@
 // Layout shuffles, color-matrix apply, NCHW normalize (+ the mean/std presets),
 // multi-channel stencil and the tiling accumulators.
+// hwcToChw, chwToHwc, srgbToLinearU8ToF32, linearF32ToSrgbU8,
+// applyColorMatrix3x3, applyColorMatrix3x4, u8NhwcToF32Nchw, nhwcToNchwF32,
+// nchwToNhwcF32, f32NchwToU8Nhwc, normalizeNchw, the `presets` object,
+// stencilHwc, featherWindow, accumulateTile, normalizeAccumulator.
 //
-// Ported from the QuickJS-era src/js/image_bindings.cpp (img_hwcToChw,
-// img_chwToHwc, img_srgbToLinearU8ToF32, img_linearF32ToSrgbU8,
-// img_applyColorMatrix3x3, img_applyColorMatrix3x4, img_u8NhwcToF32Nchw,
-// img_nhwcToNchwF32, img_nchwToNhwcF32, img_f32NchwToU8Nhwc,
-// img_normalizeNchw, the `presets` object, img_stencilHwc, img_featherWindow,
-// img_accumulateTile, img_normalizeAccumulator).
-//
-// The bronze port kept lowercase-keyed `u8ToF32` / `nhwcToNchw` / `nchwToNhwc`
-// and a positional `normalize`; those stay. These restore the old names, whose
-// option objects use the uppercase N/C/H/W keys, so callers written against
-// either generation work.
+// Also here: lowercase-keyed `u8ToF32` / `nhwcToNchw` / `nchwToNhwc` and a
+// positional `normalize`. The names above take option objects with uppercase
+// N/C/H/W keys; both spellings are supported.
 
 #include "host_image_internal.h"
 
@@ -151,8 +147,8 @@ Value colorMatrix(std::span<const Value> args, bool is3x4) {
 // ─── Batched layout / scale-bias ──────────────────────────────────────────
 
 // u8NhwcToF32Nchw(dst, src, {N, H, W, C, scale, bias}) — the model-input
-// shuffle. `scale` defaults to 1, NOT 1/255: the old contract made the caller
-// say so, and the port's u8ToF32 (which defaults to 1/255) still does.
+// shuffle. `scale` defaults to 1, NOT 1/255: the caller says so. (u8ToF32 is
+// the one that defaults to 1/255.)
 Value imageU8NhwcToF32Nchw(Value, std::span<const Value> args) {
     if (args.size() < 3)
         return ev::throwTypeError("u8NhwcToF32Nchw(dst, src, {N, H, W, C, scale, bias})");

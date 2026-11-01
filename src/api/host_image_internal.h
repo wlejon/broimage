@@ -343,8 +343,8 @@ Value ensureBroImage();
 void installCodecsOnto(Value imageObj);
 void installOpsOnto(Value imageObj);
 
-// The pre-transition bro.image members the bronze port dropped, split by
-// subject so each translation unit stays small: decode / probe / EXIF,
+// The typed bro.image kernels, split by subject so each translation unit
+// stays small: decode / probe / EXIF,
 // geometric + alpha, and layout / color-matrix / normalize / tiling.
 void installDecodeOnto(Value imageObj);
 // canDecode / decodeSupport / readHeifInfo / decodeThumbnail (native_image_heif.cpp).

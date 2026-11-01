@@ -1,10 +1,6 @@
-// Decode / probe / EXIF entry points.
-//
-// Ported from the QuickJS-era src/js/image_bindings.cpp (img_decodeU16,
-// img_decodeF32, img_decodeOriented, img_probeDimensions,
-// img_readExifOrientation, img_applyExifOrientation). The bronze port kept
-// only the encoders, so `bro.image` lost every decode path that was not the
-// plain 8-bit one brokit supplies.
+// Decode / probe / EXIF entry points: decodeU16, decodeF32, decodeOriented,
+// probeDimensions, readExifOrientation and applyExifOrientation, the decode
+// paths beyond the plain 8-bit one brokit supplies.
 //
 // Every filename argument goes through readPath first (the host's resolver,
 // then its access gate), as encodePngFile goes through writePath, so a

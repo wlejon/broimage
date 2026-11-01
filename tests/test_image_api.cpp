@@ -20,9 +20,8 @@
         }                                                                  \
     } while (0)
 
-// tests/test_image_api_restored.cpp — the bro.image kernels the bronze port
-// dropped.
-void broimageTestRestoredSurface();
+// tests/test_image_api_restored.cpp — the typed bro.image kernels.
+void broimageTestTypedKernels();
 
 // tests/test_image_api_paths.cpp — setPathResolver: the host's resolver is
 // consulted for every filename the file entry points take.
@@ -217,7 +216,7 @@ int main() {
         std::cout << "  eval: gradient [PASS]" << std::endl;
     }
 
-    broimageTestRestoredSurface();
+    broimageTestTypedKernels();
     broimageTestOpsSurface();
     broimageTestPathResolver();
     broimageTestFrames();

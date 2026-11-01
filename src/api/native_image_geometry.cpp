@@ -1,15 +1,11 @@
 // The explicitly-typed geometric kernels and the alpha-aware ones.
+// resizeU8, resizeF32, resizeChwF32, letterboxU8, padU8, cropU8,
+// centerCropU8, flipHorizontalU8, flipVerticalU8, rotate90U8,
+// premultiplyAlpha, unpremultiplyAlpha, resizeRgba8Alpha, letterboxRgba8Alpha.
 //
-// Ported from the QuickJS-era src/js/image_bindings.cpp (img_resizeU8,
-// img_resizeF32, img_resizeChwF32, img_letterboxU8, img_padU8, img_cropU8,
-// img_centerCropU8, img_flipHorizontalU8, img_flipVerticalU8, img_rotate90U8,
-// img_premultiplyAlpha, img_unpremultiplyAlpha, img_resizeRgba8Alpha,
-// img_letterboxRgba8Alpha).
-//
-// The bronze port replaced the *U8 names with untyped `resize` / `crop` /
-// `pad` / ... and, for pad, swapped the `pad: [r,g,b,a]` array for four
-// padR/padG/padB/padA scalars. Those stay; these restore the old names with
-// the old option contract, so both generations of caller work.
+// bro.image also publishes untyped `resize` / `crop` / `pad` / ...
+// (native_image_ops.cpp), whose pad takes four padR/padG/padB/padA scalars. The typed
+// names here take a `pad: [r,g,b,a]` array; both spellings are supported.
 
 #include "host_image_internal.h"
 

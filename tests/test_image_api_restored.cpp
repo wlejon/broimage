@@ -1,6 +1,6 @@
-// Coverage for the bro.image members the QuickJS -> bronze port dropped
-// (the old runtime had 61 keys under
-// bro.image, the port had 37).
+// Coverage for the typed bro.image kernels: the U16/F32/oriented decoders and
+// EXIF, the *U8 geometry and alpha kernels, and the N/C/H/W-keyed layout,
+// color-matrix, normalize and tiling kernels.
 //
 // Every check runs the kernel on real buffers and asserts the pixels, so a
 // name that is present but wired to the wrong thing still fails.
@@ -19,8 +19,8 @@ namespace {
 namespace ev = bronze::embed;
 } // namespace
 
-void broimageTestRestoredSurface() {
-    std::cout << "Checking the restored bro.image surface..." << std::endl;
+void broimageTestTypedKernels() {
+    std::cout << "Checking the typed bro.image kernels..." << std::endl;
 
     const char* script = R"JS(
         const I = bro.image;
@@ -347,12 +347,12 @@ void broimageTestRestoredSurface() {
 
     auto res = bronze::eval::evalScript(script);
     if (res.thrown) {
-        std::cerr << "  restored-surface script threw: " << ev::toUtf8(res.value) << std::endl;
+        std::cerr << "  typed-kernel script threw: " << ev::toUtf8(res.value) << std::endl;
         std::exit(1);
     }
     if (ev::toUtf8(res.value) != "SUCCESS") {
-        std::cerr << "  restored-surface script returned: " << ev::toUtf8(res.value) << std::endl;
+        std::cerr << "  typed-kernel script returned: " << ev::toUtf8(res.value) << std::endl;
         std::exit(1);
     }
-    std::cout << "  restored bro.image kernels OK." << std::endl;
+    std::cout << "  typed bro.image kernels OK." << std::endl;
 }

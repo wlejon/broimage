@@ -178,6 +178,7 @@ target_sources(broimage PRIVATE
     src/decode_gif.cpp
     src/codec.cpp
     src/decode_tiff.cpp
+    src/decode_geotiff.cpp
     src/tiff_ifd.cpp
     src/tiff_codecs.cpp
     src/tiff_convert.cpp

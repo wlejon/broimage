@@ -98,7 +98,7 @@ void broimageTestAccessGate() {
     const fs::path secret = hidden / "a.png";
     for (const char* call : {"decodeU16", "decodeF32", "decodeOriented", "decodeExifThumbnail",
                              "readExifOrientation", "readExif", "readHeifInfo", "decodeFrames",
-                             "openFrames"}) {
+                             "openFrames", "readGeoTiffInfo", "decodeGeoTiff"}) {
         r = syncJs(std::string("bro.image.") + call + "(" + jsStr(secret) + ")");
         GCHECK(r == refusal(secret), std::string(call) + ": " + r);
     }

@@ -41,6 +41,7 @@ struct OwnDecoder {
     bool (*probe)(const uint8_t*, std::size_t, int& w, int& h, int& channels);
     bool (*decode8)(const uint8_t*, std::size_t, Image& out, std::string* why);
     bool (*decode16)(const uint8_t*, std::size_t, ImageU16& out, std::string* why);  // may be null
+    bool (*decode32f)(const uint8_t*, std::size_t, ImageF32& out, std::string* why); // may be null
 };
 
 bool ico_probe(const uint8_t* d, std::size_t n, int& w, int& h, int& c) {
@@ -86,6 +87,10 @@ bool tiff_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why)
 }
 
 bool tiff_decode16(const uint8_t* d, std::size_t n, ImageU16& out, std::string* why) {
+    return tiff_decode_into(d, n, out, why);
+}
+
+bool tiff_decode32f(const uint8_t* d, std::size_t n, ImageF32& out, std::string* why) {
     return tiff_decode_into(d, n, out, why);
 }
 
@@ -160,12 +165,12 @@ bool cr3_decode8(const uint8_t* d, std::size_t n, Image& out, std::string* why) 
 }
 
 const OwnDecoder kOwn[] = {
-    {jpeg_sniff, jpeg_probe, jpeg_decode8, nullptr},
-    {detail::cr3_sniff, cr3_probe, cr3_decode8, nullptr},
-    {detail::heif_sniff, detail::heif_probe, heif_decode8, nullptr},
-    {detail::is_ico, ico_probe, ico_decode, nullptr},
-    {detail::is_tiff, tiff_probe, tiff_decode8, tiff_decode16},
-    {detail::is_gif, gif_probe, gif_decode8, nullptr},
+    {jpeg_sniff, jpeg_probe, jpeg_decode8, nullptr, nullptr},
+    {detail::cr3_sniff, cr3_probe, cr3_decode8, nullptr, nullptr},
+    {detail::heif_sniff, detail::heif_probe, heif_decode8, nullptr, nullptr},
+    {detail::is_ico, ico_probe, ico_decode, nullptr, nullptr},
+    {detail::is_tiff, tiff_probe, tiff_decode8, tiff_decode16, tiff_decode32f},
+    {detail::is_gif, gif_probe, gif_decode8, nullptr, nullptr},
 };
 
 const OwnDecoder* own_decoder(const uint8_t* data, std::size_t size) {
@@ -352,29 +357,26 @@ bool decode_memory_u16(const uint8_t* data, std::size_t size, ImageU16& out,
 }
 
 bool decode_file_f32(const std::string& path, ImageF32& out, std::string* error) {
-    int w = 0, h = 0, channels = 0;
-    float* pixels = stbi_loadf(path.c_str(), &w, &h, &channels, 4);
-    if (!pixels) {
-        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_loadf failed";
+    std::vector<uint8_t> bytes;
+    if (!detail::read_file_bytes(path, bytes)) {
+        if (error) *error = "can't fopen";
         out = {};
         return false;
     }
-    out.width = w; out.height = h; out.channels = 4;
-    out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
-    stbi_image_free(pixels);
-    return true;
+    return decode_memory_f32(bytes.data(), bytes.size(), out, error);
 }
 
 bool decode_memory_f32(const uint8_t* data, std::size_t size, ImageF32& out,
                        std::string* error) {
+    std::string own_why;
+    if (const OwnDecoder* own = own_decoder(data, size); own && own->decode32f) {
+        if (own->decode32f(data, size, out, &own_why)) return true;
+    }
+    if (!data || !fits_int(size)) return fail_decode(out, error, own_why, "no data");
     int w = 0, h = 0, channels = 0;
     float* pixels = stbi_loadf_from_memory(data, static_cast<int>(size),
                                            &w, &h, &channels, 4);
-    if (!pixels) {
-        if (error) *error = stbi_failure_reason() ? stbi_failure_reason() : "stbi_loadf_from_memory failed";
-        out = {};
-        return false;
-    }
+    if (!pixels) return fail_decode(out, error, own_why, "stbi_loadf_from_memory failed");
     out.width = w; out.height = h; out.channels = 4;
     out.pixels.assign(pixels, pixels + static_cast<std::size_t>(w) * h * 4);
     stbi_image_free(pixels);

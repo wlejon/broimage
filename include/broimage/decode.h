@@ -1,6 +1,7 @@
 #pragma once
 
 #include "broimage/buffer.h"
+#include "broimage/geotiff.h"
 
 #include <cstddef>
 #include <cstdint>

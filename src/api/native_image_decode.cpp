@@ -316,6 +316,109 @@ Value imageApplyExifOrientation(Value, std::span<const Value> args) {
                         img.pixels.data(), img.pixels.size(), img.pixels.size());
 }
 
+Value buildGeoTiffInfoObj(const broimage::GeoTiffInfo& info) {
+    ev::Persistent scaleVal(info.has_pixel_scale
+        ? hostArrayOf(3, [&](size_t i) { return ev::fromDouble(info.pixel_scale[i]); })
+        : ev::null());
+    ev::Persistent tieVal(hostArrayOf(info.tiepoints.size(), [&](size_t i) {
+        return ev::fromDouble(info.tiepoints[i]);
+    }));
+    ev::Persistent transformVal(!info.model_transform.empty()
+        ? hostArrayOf(info.model_transform.size(), [&](size_t i) {
+              return ev::fromDouble(info.model_transform[i]);
+          })
+        : ev::null());
+
+    ObjectBuilder obj;
+    obj.set("width", static_cast<double>(info.width));
+    obj.set("height", static_cast<double>(info.height));
+    obj.set("channels", static_cast<double>(info.channels));
+    obj.set("bitsPerSample", static_cast<double>(info.bits_per_sample));
+    obj.set("sampleFormat", static_cast<double>(info.sample_format));
+    obj.set("tileWidth", static_cast<double>(info.tile_width));
+    obj.set("tileHeight", static_cast<double>(info.tile_height));
+    obj.set("isTiled", info.is_tiled);
+    obj.set("isBigTiff", info.is_bigtiff);
+    obj.set("pixelScale", scaleVal.get());
+    obj.set("tiepoints", tieVal.get());
+    obj.set("modelTransform", transformVal.get());
+    obj.set("noData", info.has_nodata ? ev::fromDouble(info.nodata) : ev::null());
+    obj.set("epsg", info.epsg > 0 ? ev::fromDouble(static_cast<double>(info.epsg)) : ev::null());
+    return obj.build();
+}
+
+// readGeoTiffInfo(pathOrBytes) -> { width, height, channels, bitsPerSample,
+// sampleFormat, tileWidth, tileHeight, isTiled, isBigTiff, pixelScale,
+// tiepoints, modelTransform, noData, epsg } or null.
+Value imageReadGeoTiffInfo(Value, std::span<const Value> args) {
+    if (args.empty()) return ev::throwTypeError("readGeoTiffInfo(pathOrBytes)");
+    broimage::GeoTiffInfo info;
+    std::string err;
+    bool ok = false;
+    if (ev::isString(args[0])) {
+        ok = broimage::read_geotiff_info_file(readPath(ev::toUtf8(args[0])), info, &err);
+    } else {
+        const uint8_t* p = nullptr;
+        size_t n = 0;
+        if (!bytesArg(args[0], p, n)) {
+            return ev::throwTypeError("readGeoTiffInfo: expected path string or bytes");
+        }
+        ok = broimage::read_geotiff_info_memory(p, n, info, &err);
+    }
+    if (!ok) return ev::null();
+    return buildGeoTiffInfoObj(info);
+}
+
+// decodeGeoTiff(pathOrBytes[, { x, y, width, height }]) -> { width, height,
+// channels, samples: Float32Array, pixels: Float32Array, info } or null.
+Value imageDecodeGeoTiff(Value, std::span<const Value> args) {
+    if (args.empty()) return ev::throwTypeError("decodeGeoTiff(pathOrBytes[, { x, y, width, height }])");
+    ev::Persistent srcArg(args[0]);
+    broimage::RasterWindow win;
+    if (args.size() > 1 && ev::isObject(args[1])) {
+        ev::Persistent optArg(args[1]);
+        int32_t x = 0, y = 0, w = 0, h = 0;
+        if (!getPropI32(optArg.get(), "x", &x, 0) ||
+            !getPropI32(optArg.get(), "y", &y, 0) ||
+            !getPropI32(optArg.get(), "width", &w, 0) ||
+            !getPropI32(optArg.get(), "height", &h, 0)) {
+            return ev::undefined();
+        }
+        win.x = x;
+        win.y = y;
+        win.width = w;
+        win.height = h;
+    }
+
+    broimage::RasterF32 out;
+    std::string err;
+    bool ok = false;
+    if (ev::isString(srcArg.get())) {
+        ok = broimage::decode_geotiff_file_f32(readPath(ev::toUtf8(srcArg.get())), out, win, &err);
+    } else {
+        const uint8_t* p = nullptr;
+        size_t n = 0;
+        if (!bytesArg(srcArg.get(), p, n)) {
+            return ev::throwTypeError("decodeGeoTiff: expected path string or bytes");
+        }
+        ok = broimage::decode_geotiff_memory_f32(p, n, out, win, &err);
+    }
+    if (!ok) return ev::null();
+
+    ev::Persistent samples(typedArrayFrom(ev::elements::Float32, out.samples.data(),
+                                          out.samples.size() * sizeof(float),
+                                          static_cast<uint32_t>(out.samples.size())));
+    ev::Persistent infoVal(buildGeoTiffInfoObj(out.info));
+    ObjectBuilder obj;
+    obj.set("width", static_cast<double>(out.width));
+    obj.set("height", static_cast<double>(out.height));
+    obj.set("channels", static_cast<double>(out.channels));
+    obj.set("samples", samples.get());
+    obj.set("pixels", samples.get());
+    obj.set("info", infoVal.get());
+    return obj.build();
+}
+
 } // namespace
 
 void installDecodeOnto(Value imageObj) {
@@ -329,6 +432,8 @@ void installDecodeOnto(Value imageObj) {
     b.def("readExifOrientation", 1, imageReadExifOrientation);
     b.def("readExif", 1, imageReadExif);
     b.def("applyExifOrientation", 4, imageApplyExifOrientation);
+    b.def("readGeoTiffInfo", 1, imageReadGeoTiffInfo);
+    b.def("decodeGeoTiff", 2, imageDecodeGeoTiff);
     installHeifOnto(b.get());
 }
 

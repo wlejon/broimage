@@ -216,6 +216,50 @@ int main() {
         std::cout << "  eval: gradient [PASS]" << std::endl;
     }
 
+    // Test readGeoTiffInfo + decodeGeoTiff (full and windowed) + decodeF32 on a Float32 GeoTIFF
+    {
+        auto r = evalScript(
+            "(function() {"
+            "  if (typeof bro.image.readGeoTiffInfo !== 'function') return false;"
+            "  if (typeof bro.image.decodeGeoTiff !== 'function') return false;"
+            "  const buf = new ArrayBuffer(256);"
+            "  const u8 = new Uint8Array(buf);"
+            "  const dv = new DataView(buf);"
+            "  u8[0] = 0x49; u8[1] = 0x49; dv.setUint16(2, 42, true); dv.setUint32(4, 24, true);"
+            "  dv.setFloat32(8, 123.5, true); dv.setFloat32(12, 456.25, true);"
+            "  dv.setFloat32(16, 789.0, true); dv.setFloat32(20, -42.5, true);"
+            "  let p = 24;"
+            "  dv.setUint16(p, 8, true); p += 2;"
+            "  const tag = (id, type, cnt, val) => {"
+            "    dv.setUint16(p, id, true); dv.setUint16(p + 2, type, true);"
+            "    dv.setUint32(p + 4, cnt, true); dv.setUint32(p + 8, val, true); p += 12;"
+            "  };"
+            "  tag(256, 4, 1, 2);"
+            "  tag(257, 4, 1, 2);"
+            "  tag(258, 3, 1, 32);"
+            "  tag(259, 3, 1, 1);"
+            "  tag(262, 3, 1, 1);"
+            "  tag(273, 4, 1, 8);"
+            "  tag(279, 4, 1, 16);"
+            "  tag(339, 3, 1, 3);"
+            "  dv.setUint32(p, 0, true);"
+            "  const info = bro.image.readGeoTiffInfo(u8);"
+            "  if (!info || info.width !== 2 || info.height !== 2 || info.bitsPerSample !== 32 || info.sampleFormat !== 3) return false;"
+            "  const full = bro.image.decodeGeoTiff(u8);"
+            "  if (!full || full.width !== 2 || full.height !== 2 || full.channels !== 1) return false;"
+            "  if (full.samples[0] !== 123.5 || full.samples[3] !== -42.5) return false;"
+            "  const win = bro.image.decodeGeoTiff(u8, { x: 1, y: 1, width: 1, height: 1 });"
+            "  if (!win || win.width !== 1 || win.height !== 1 || win.samples[0] !== -42.5) return false;"
+            "  const f32 = bro.image.decodeF32(u8);"
+            "  if (!f32 || f32.width !== 2 || f32.height !== 2 || f32.pixels[0] !== 123.5) return false;"
+            "  return true;"
+            "})()"
+        );
+        CHECK(!r.thrown);
+        CHECK(ev::isBool(r.value) && ev::toBool(r.value));
+        std::cout << "  eval: readGeoTiffInfo + decodeGeoTiff + decodeF32 [PASS]" << std::endl;
+    }
+
     broimageTestTypedKernels();
     broimageTestOpsSurface();
     broimageTestPathResolver();

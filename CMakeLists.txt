@@ -214,15 +214,19 @@ if(BROIMAGE_WITH_TENSOR)
 endif()
 target_sources(broimage PRIVATE src/decode_jpeg.cpp src/decode_scaled.cpp src/decode_cr3.cpp)
 target_link_libraries(broimage PRIVATE broimage_jpeg_turbo)
-# HEIC (HEVC) is decoded by the operating system, never by code of ours:
-# WIC on Windows, ImageIO on Apple platforms, nothing elsewhere. AVIF's AV1
-# decoder is the host's (set_av1_decoder; bro registers dav1d).
+# HEIC (HEVC) is decoded by the system, never by code of ours: WIC on
+# Windows, ImageIO on Apple platforms, the system's libheif elsewhere on
+# Unix (opened at run time with dlopen, never linked), nothing on the rest.
+# AVIF's AV1 decoder is the host's (set_av1_decoder; bro registers dav1d).
 if(WIN32)
     target_sources(broimage PRIVATE src/heif_os_win.cpp)
     target_link_libraries(broimage PRIVATE windowscodecs ole32 mfplat mfuuid)
 elseif(APPLE)
     target_sources(broimage PRIVATE src/heif_os_apple.cpp)
     target_link_libraries(broimage PRIVATE "-framework ImageIO" "-framework CoreGraphics" "-framework CoreFoundation")
+elseif(UNIX AND NOT EMSCRIPTEN)
+    target_sources(broimage PRIVATE src/heif_os_libheif.cpp)
+    target_link_libraries(broimage PRIVATE ${CMAKE_DL_LIBS})
 else()
     target_sources(broimage PRIVATE src/heif_os_none.cpp)
 endif()

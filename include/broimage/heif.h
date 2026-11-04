@@ -19,11 +19,14 @@
 //               and range (or the bitstream's), BT.601/709/2020, full or
 //               limited, bilinear chroma upsampling. Without a decoder an
 //               AVIF fails to decode with a reason (its size still probes).
-//   HEVC (HEIC) the operating system's decoder, never one of ours: WIC on
-//               Windows (needs Microsoft's "HEVC Video Extensions" from the
-//               Store), ImageIO on macOS. Linux has none: HEIC fails with a
-//               reason saying so. The whole file goes to the OS; the
-//               container reader still answers size, Exif and orientation.
+//   HEVC (HEIC) the system's decoder, never one of ours: WIC on Windows
+//               (needs Microsoft's "HEVC Video Extensions" from the Store),
+//               ImageIO on macOS, libheif on Linux when it is installed
+//               (opened at run time, never linked; BROIMAGE_LIBHEIF names
+//               another library to open). Where there is none, HEIC fails
+//               with a reason saying what to install. The whole file goes to
+//               the system decoder; the container reader still answers
+//               size, Exif and orientation.
 //
 // Orientation. HEIF rotates and mirrors with item properties, not the Exif
 // Orientation tag (which a HEIF reader must ignore). broimage follows that:

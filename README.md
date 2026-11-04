@@ -46,8 +46,10 @@ Built and tested on Windows, Linux and macOS (x86-64 and arm64).
   and an image sequence's first frame. AV1 pixels come from a decoder the
   host registers (`set_av1_decoder`; bro uses dav1d) and broimage converts
   8/10/12-bit 4:2:0/4:2:2/4:4:4/mono YUV to RGBA itself, tone-mapping PQ/HLG
-  to SDR. HEVC is decoded by the operating system only — WIC on Windows
-  (with the Store's HEVC Video Extensions), ImageIO on macOS, none on Linux.
+  to SDR. HEVC is decoded by the system only — WIC on Windows (with the
+  Store's HEVC Video Extensions), ImageIO on macOS, and on Linux the
+  system's libheif when it is installed (opened with dlopen at run time,
+  never linked or shipped; without it HEIC says to install libheif).
   `can_decode(type)` says what this machine reads.
 - **EXIF** — `read_exif` (`exif.h`) reads camera, lens, exposure, aperture,
   ISO, focal length, date taken, GPS and orientation from a JPEG, TIFF, WebP,

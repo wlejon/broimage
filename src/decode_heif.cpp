@@ -1,6 +1,7 @@
 // HEIF decoding (heif.h): the primary item, through grids, the alpha
 // auxiliary image, premultiplication and the clean aperture, into straight
-// RGBA8; AV1 items through the registered decoder, HEVC through the OS.
+// RGBA8; AV1 items through the registered decoder, HEVC through the
+// system's decoder (heif_os.h).
 
 #include "broimage/heif.h"
 
@@ -485,7 +486,7 @@ bool single_item_file(const HeifFile& f, const HeifItem& it, std::vector<uint8_t
 // ---- The primary image -------------------------------------------------------------
 
 const char* kNoHevc =
-    "HEIC: no HEVC decoder (HEIC images are decoded by the operating system, and this one has none)";
+    "HEIC: no HEVC decoder (HEIC images are decoded by the system's decoder, and there is none here)";
 
 bool decode_os(const uint8_t* data, std::size_t size, const HeifFile& f, const HeifItem* primary, Image& out,
                std::string* why) {

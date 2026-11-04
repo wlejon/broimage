@@ -1,6 +1,7 @@
-// The operating system's HEIF decoder, for HEVC-coded images (HEIC): WIC on
-// Windows, ImageIO on macOS, none elsewhere. broimage carries no HEVC
-// decoder of its own.
+// The system's HEIF decoder, for HEVC-coded images (HEIC): WIC on Windows,
+// ImageIO on macOS, libheif (opened with dlopen when installed) on Linux and
+// the other Unix systems, none elsewhere. broimage carries no HEVC decoder
+// of its own.
 
 #pragma once
 

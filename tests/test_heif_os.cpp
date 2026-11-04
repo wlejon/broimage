@@ -1,10 +1,13 @@
-// HEIC through the operating system's decoder (heif.h). On Windows a HEIC
-// is made with WIC's own HEIF encoder (which needs the same HEVC extension
-// the decoder does) and decoded back; the test skips, saying why, where
-// there is no HEVC codec. A copy with an irot property added checks that
-// the OS hands back the stored pixels and the orientation comes from the
-// container. BROIMAGE_HEIC_FIXTURE_OUT=<path> keeps the made HEIC;
-// BROIMAGE_HEIC_FIXTURE=<path> decodes a given one instead (any platform).
+// HEIC through the system's decoder (heif.h). Wherever one is available
+// (WIC, ImageIO, libheif) the committed fixtures decode: thumbnail, clean
+// aperture, irot, alpha, 10-bit and a grid. On Windows a HEIC is also made
+// with WIC's own HEIF encoder (which needs the same HEVC extension the
+// decoder does) and decoded back; the test skips, saying why, where there is
+// no HEVC codec. Copies with irot / imir added check that the system hands
+// back the stored pixels and the orientation comes from the container.
+// `--expect-absent` (run with BROIMAGE_LIBHEIF naming a missing library)
+// checks the machine without one. BROIMAGE_HEIC_FIXTURE_OUT=<path> keeps the
+// WIC-made HEIC; BROIMAGE_HEIC_FIXTURE=<path> decodes a given one too.
 #ifdef _MSC_VER
 #define _CRT_SECURE_NO_WARNINGS
 #endif
@@ -236,13 +239,141 @@ void check_decode(const std::vector<uint8_t>& heic, bool known_content) {
     }
 }
 
+std::vector<uint8_t> fixture(const char* name) {
+    const std::string path = std::string(BROIMAGE_TEST_FIXTURES) + "/" + name;
+    std::ifstream f(path, std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (bytes.empty()) std::fprintf(stderr, "FAIL: cannot read %s\n", path.c_str());
+    CHECK(!bytes.empty());
+    return bytes;
+}
+
+uint8_t alpha_at(const broimage::Image& img, int x, int y) {
+    return img.pixels[(std::size_t(y) * img.width + x) * 4 + 3];
+}
+
+// The committed fixtures (tests/fixtures, made by libheif's heif-enc with
+// x265 from the 64 x 48 pattern): one image with a 16 x 12 thumbnail and a
+// clean aperture (coded 64 x 64), alpha (straight and premultiplied),
+// 10-bit, a 2 x 2 grid of 32 x 32
+// tiles, and one turned by irot. Wherever the system decodes HEIC.
+void check_fixtures() {
+    using O = broimage::ExifOrientation;
+    std::string why;
+    const auto q = fixture("heic_quadrants.heic");
+    if (q.empty()) return;
+    check_decode(q, true);
+
+    broimage::Image thumb;
+    CHECK(broimage::decode_heif_thumbnail(q.data(), q.size(), 8, thumb, &why));
+    CHECK(thumb.width == 16 && thumb.height == 12);
+    if (!thumb.pixels.empty()) {
+        const uint8_t* tl = thumb.pixels.data() + (std::size_t(3) * 16 + 4) * 4;
+        const uint8_t* r = thumb.pixels.data() + (std::size_t(6) * 16 + 12) * 4;
+        CHECK(close_to(tl, 255, 0, 0, 48) && close_to(r, 0, 0, 255, 48));
+    }
+
+    // irot 3 (270 anti-clockwise, after the clap): stored 64 x 48, upright 48 x 64.
+    const auto rot = fixture("heic_rot.heic");
+    broimage::Image stored, up;
+    CHECK(broimage::decode_memory(rot.data(), rot.size(), stored, &why));
+    CHECK(shows(stored, O::Normal));
+    CHECK(broimage::read_exif_orientation(rot.data(), rot.size()) == O::Rotate90CW);
+    CHECK(broimage::decode_memory_oriented(rot.data(), rot.size(), up));
+    CHECK(shows(up, O::Rotate90CW));
+
+    // Alpha 128 on the left 16 columns, opaque elsewhere; straight colour.
+    const auto a = fixture("heic_alpha.heic");
+    broimage::Image ai;
+    int w = 0, h = 0, c = 0;
+    CHECK(broimage::probe_dimensions_memory(a.data(), a.size(), &w, &h, &c) && c == 4);
+    CHECK(broimage::decode_memory(a.data(), a.size(), ai, &why));
+    CHECK(shows(ai, O::Normal));
+    if (ai.width == kW && ai.height == kH) {
+        CHECK(std::abs(int(alpha_at(ai, 4, 12)) - 128) <= 8);
+        CHECK(alpha_at(ai, 40, 24) == 255);
+        CHECK(close_to(ai.pixels.data() + (std::size_t(12) * kW + 4) * 4, 255, 0, 0, 32));
+    }
+    // The same stored premultiplied ('prem'): it comes back straight.
+    const auto pa = fixture("heic_alpha_prem.heic");
+    broimage::Image pi;
+    CHECK(broimage::decode_memory(pa.data(), pa.size(), pi, &why));
+    CHECK(shows(pi, O::Normal));
+    if (pi.width == kW && pi.height == kH) {
+        CHECK(std::abs(int(alpha_at(pi, 4, 12)) - 128) <= 8);
+        CHECK(close_to(pi.pixels.data() + (std::size_t(12) * kW + 4) * 4, 255, 0, 0, 32));
+        CHECK(close_to(pi.pixels.data() + (std::size_t(36) * kW + 4) * 4, 0, 255, 0, 32));
+    }
+
+    // 10-bit HEVC comes back as 8-bit RGBA.
+    const auto ten = fixture("heic_10bit.heic");
+    broimage::HeifInfo info;
+    CHECK(broimage::read_heif_info(ten.data(), ten.size(), info) && info.bit_depth == 10);
+    broimage::Image ti;
+    CHECK(broimage::decode_memory(ten.data(), ten.size(), ti, &why));
+    CHECK(shows(ti, O::Normal));
+
+    // A grid: the tiles put together and cut to the grid's 64 x 48.
+    const auto grid = fixture("heic_grid.heic");
+    CHECK(broimage::read_heif_info(grid.data(), grid.size(), info) && info.grid && info.grid_rows == 2 &&
+          info.grid_columns == 2);
+    broimage::Image gi;
+    CHECK(broimage::decode_memory(grid.data(), grid.size(), gi, &why));
+    CHECK(shows(gi, O::Normal));
+
+    // Damaged files fail cleanly (or decode something), never crash.
+    std::vector<uint8_t> cut(q.begin(), q.begin() + std::ptrdiff_t(q.size() * 2 / 3));
+    broimage::Image bad;
+    why.clear();
+    CHECK(!broimage::decode_memory(cut.data(), cut.size(), bad, &why) && !why.empty() && bad.pixels.empty());
+    for (std::size_t step : {7u, 13u, 31u}) {
+        std::vector<uint8_t> noisy = q;
+        for (std::size_t i = q.size() / 2; i < noisy.size(); i += step) noisy[i] ^= 0x5A;
+        broimage::Image any;
+        why.clear();
+        if (!broimage::decode_memory(noisy.data(), noisy.size(), any, &why)) CHECK(!why.empty());
+    }
+}
+
+// The machine without the system decoder (BROIMAGE_LIBHEIF naming a library
+// that does not exist): HEIC says why, and the container still answers.
+void check_absent(const std::string& why) {
+    CHECK(why.find("libheif") != std::string::npos);
+    const auto q = fixture("heic_quadrants.heic");
+    if (q.empty()) return;
+    broimage::Image img;
+    std::string dwhy;
+    CHECK(!broimage::decode_memory(q.data(), q.size(), img, &dwhy) && dwhy == why);
+    int w = 0, h = 0, c = 0;
+    CHECK(broimage::probe_dimensions_memory(q.data(), q.size(), &w, &h, &c) && w == kW && h == kH);
+    const auto rot = fixture("heic_rot.heic");
+    CHECK(broimage::read_exif_orientation(rot.data(), rot.size()) == broimage::ExifOrientation::Rotate90CW);
+    dwhy.clear();
+    CHECK(!broimage::decode_heif_thumbnail(q.data(), q.size(), 8, img, &dwhy) && dwhy == why);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::string why;
     const bool available = broimage::can_decode("image/heic", &why);
     std::printf("HEIC decoder: %s%s\n", available ? "available" : "unavailable: ", available ? "" : why.c_str());
     if (!available) CHECK(!why.empty());
+    if (argc > 1 && std::strcmp(argv[1], "--expect-absent") == 0) {
+        CHECK(!available);
+        check_absent(why);
+        if (g_failed) {
+            std::fprintf(stderr, "%d check(s) failed\n", g_failed);
+            return 1;
+        }
+        std::printf("test_heif_os (no libheif): all passed\n");
+        return 0;
+    }
+    if (available) check_fixtures();
+#if defined(__linux__)
+    // halo and CI's Linux machines have libheif; say so where one does not.
+    if (!available) std::printf("SKIP: no libheif here (%s)\n", why.c_str());
+#endif
 
     if (const char* in = std::getenv("BROIMAGE_HEIC_FIXTURE")) {
         std::ifstream f(in, std::ios::binary);

@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 # Image decoding is the reason this is worth running. broimage takes in PNG and
 # JPEG bytes — the most untrusted input any of these repos handles — and the

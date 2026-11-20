@@ -6,8 +6,15 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
+
+#if BROIMAGE_HAS_BRASS_JIT
+#include <brass/cache/artifact_cache.hpp>
+#include <brass/cache/native_module_cache.hpp>
+#endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -72,6 +79,96 @@ void run_multithreaded_slices(int dst_h, SliceFn&& slice_fn) {
 #endif
 }
 
+#if BROIMAGE_HAS_BRASS_JIT
+std::filesystem::path image_cache_directory() {
+    if (const char* env_dir = std::getenv("BROIMAGE_CACHE_DIR"); env_dir && env_dir[0] != '\0') {
+        return std::filesystem::path(env_dir);
+    }
+#if defined(_WIN32)
+    if (const char* local_app = std::getenv("LOCALAPPDATA"); local_app && local_app[0] != '\0') {
+        return std::filesystem::path(local_app) / "broimage" / "kernels";
+    }
+    if (const char* user_prof = std::getenv("USERPROFILE"); user_prof && user_prof[0] != '\0') {
+        return std::filesystem::path(user_prof) / ".cache" / "broimage" / "kernels";
+    }
+#else
+    if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && xdg[0] != '\0') {
+        return std::filesystem::path(xdg) / "broimage" / "kernels";
+    }
+    if (const char* home = std::getenv("HOME"); home && home[0] != '\0') {
+        return std::filesystem::path(home) / ".cache" / "broimage" / "kernels";
+    }
+#endif
+    std::error_code ec;
+    auto tmp = std::filesystem::temp_directory_path(ec);
+    if (!ec && !tmp.empty()) {
+        return tmp / "broimage" / "kernels";
+    }
+    return std::filesystem::path(".cache") / "broimage" / "kernels";
+}
+
+brass::cache::NativeModuleCache& image_native_cache() {
+    static constexpr uint64_t kMaxBytes = 64ULL * 1024 * 1024;
+    static auto* store = new brass::cache::ArtifactCache(image_cache_directory(), kMaxBytes);
+    static auto* cache = new brass::cache::NativeModuleCache(*store);
+    return *cache;
+}
+
+template <typename BuildFn>
+brass::codegen::KernelFunction compile_cached_image_kernel(
+    const char* kind,
+    const char* module_name,
+    const char* sym_name,
+    BuildFn&& build_fn) {
+    using namespace brass::codegen;
+    KernelOptions opts;
+    brass::cache::KeyBuilder kb("broimage.kernel/1");
+    kb.add("kind", kind);
+    kb.add_u64("opt_level", static_cast<uint64_t>(opts.opt_level));
+    kb.add_bool("enable_optimizations", opts.enable_optimizations);
+    kb.add_bool("enable_sroa", opts.enable_sroa);
+    kb.add_bool("enable_bce", opts.enable_bce);
+    kb.add_bool("enable_smt_guard_elim", opts.enable_smt_guard_elim);
+    kb.add_bool("enable_superopt", opts.enable_superopt);
+    kb.add_bool("enable_avx2", opts.enable_avx2);
+    kb.add_bool("enable_fma", opts.enable_fma);
+    kb.add_bool("enable_fp_reassociation", opts.enable_fp_reassociation);
+    kb.add_bool("enable_vectorize", opts.enable_vectorize);
+    kb.add_bool("enable_slp", opts.enable_slp);
+    kb.add_bool("enable_unroll", opts.enable_unroll);
+    kb.add_u64("unroll_factor", static_cast<uint64_t>(opts.unroll_factor));
+    kb.add_bool("enable_parallel", opts.enable_parallel);
+    kb.add_bool("enable_ftz_daz", opts.enable_ftz_daz);
+
+    const brass::cache::NativeOptions native_opts;
+    std::string cache_err;
+    auto native_mod = image_native_cache().get_or_build_object(
+        kb.finish(),
+        [&](brass::object::ObjectFile& obj, std::string& err) -> bool {
+            brass::Module mod(module_name);
+            if (!build_fn(mod)) {
+                err = "Image kernel MIR build failed";
+                return false;
+            }
+            KernelJit jit(opts);
+            obj = jit.compile_object(mod);
+            return true;
+        },
+        native_opts,
+        &cache_err);
+    if (native_mod) {
+        if (void* sym = native_mod->symbol(sym_name)) {
+            return KernelFunction::from_owner(sym_name, sym, 0, std::move(native_mod));
+        }
+    }
+
+    brass::Module mod(module_name);
+    if (!build_fn(mod)) return {};
+    KernelJit jit(opts);
+    return jit.compile(mod, sym_name);
+}
+#endif
+
 } // namespace
 
 JitImageCompiler& JitImageCompiler::instance() {
@@ -113,13 +210,14 @@ brass::codegen::ImageResizeRgba8Fn JitImageCompiler::get_or_compile_resize(const
         }
     }
 
-    brass::Module mod("jit_resize_rgba8_" + std::to_string(hash));
-    brass::codegen::ImageBuilder builder(mod);
-    auto* fn = builder.build_resize_rgba8_function("image_resize_rgba8");
-    if (!fn) return nullptr;
-
-    brass::codegen::KernelJit jit;
-    auto kfn = jit.compile(*fn);
+    auto kfn = compile_cached_image_kernel(
+        "image_resize_rgba8",
+        "jit_resize_rgba8",
+        "image_resize_rgba8",
+        [](brass::Module& mod) {
+            brass::codegen::ImageBuilder builder(mod);
+            return builder.build_resize_rgba8_function("image_resize_rgba8") != nullptr;
+        });
     if (!kfn) return nullptr;
 
     auto fn_ptr = kfn.as<brass::codegen::ImageResizeRgba8Fn>();
@@ -152,13 +250,14 @@ brass::codegen::ImagePreprocFusedFn JitImageCompiler::get_or_compile_preproc(con
         }
     }
 
-    brass::Module mod("jit_fused_preproc_" + std::to_string(hash));
-    brass::codegen::ImageBuilder builder(mod);
-    auto* fn = builder.build_fused_preproc_function("image_preproc_fused", 3);
-    if (!fn) return nullptr;
-
-    brass::codegen::KernelJit jit;
-    auto kfn = jit.compile(*fn);
+    auto kfn = compile_cached_image_kernel(
+        "image_preproc_fused_c3",
+        "jit_fused_preproc_c3",
+        "image_preproc_fused",
+        [](brass::Module& mod) {
+            brass::codegen::ImageBuilder builder(mod);
+            return builder.build_fused_preproc_function("image_preproc_fused", 3) != nullptr;
+        });
     if (!kfn) return nullptr;
 
     auto fn_ptr = kfn.as<brass::codegen::ImagePreprocFusedFn>();

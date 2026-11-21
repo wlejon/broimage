@@ -102,6 +102,7 @@ void installImage() {
     installCompareOnto(img.get());
     installMotionOnto(img.get());
     installPreprocOnto(img.get());
+    installKernelFilterOnto(img.get());
 }
 
 } // namespace broimage::api

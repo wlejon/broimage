@@ -360,5 +360,6 @@ void installSharpnessOnto(Value imageObj);
 void installCompareOnto(Value imageObj);
 void installMotionOnto(Value imageObj);
 void installPreprocOnto(Value imageObj);
+void installKernelFilterOnto(Value imageObj);
 
 } // namespace broimage::api

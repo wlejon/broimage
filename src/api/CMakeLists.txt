@@ -11,6 +11,7 @@ add_library(broimage_api STATIC
     native_image_motion.cpp
     native_image_ops.cpp
     native_image_preproc.cpp
+    native_image_kernel.cpp
 )
 
 target_include_directories(broimage_api PUBLIC

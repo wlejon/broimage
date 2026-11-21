@@ -79,6 +79,12 @@ if(BROIMAGE_WITH_JIT)
     bro_dependency(brass GITHUB wlejon/brass)
 endif()
 
+option(BROIMAGE_WITH_BROKERNEL "Enable brokernel 2D image filter helper (std::image)" OFF)
+if(BROIMAGE_WITH_BROKERNEL)
+    bro_dependency(brokernel GITHUB wlejon/brokernel
+                   OPTIONS BROKERNEL_BUILD_TESTS=OFF BROKERNEL_BUILD_BENCH=OFF)
+endif()
+
 # bronze, the JavaScript runtime the api binds (it brings brass too). The api
 # is bound across bronze's C++ embed boundary, so it has to build against the
 # bronze the surrounding tree builds against.
@@ -245,6 +251,12 @@ if(BROIMAGE_WITH_JIT AND TARGET brass)
     if(OpenMP_CXX_FOUND)
         target_link_libraries(broimage PUBLIC OpenMP::OpenMP_CXX)
     endif()
+endif()
+if(BROIMAGE_WITH_BROKERNEL AND TARGET brokernel)
+    target_sources(broimage PRIVATE src/kernel_filter.cpp)
+    target_link_libraries(broimage PRIVATE brokernel)
+    target_compile_definitions(broimage PUBLIC BROIMAGE_HAS_BROKERNEL=1)
+    set(BROIMAGE_HAS_BROKERNEL 1)
 endif()
 # --- Standalone Bronze JavaScript API ---
 # (BROIMAGE_ENABLE_API is declared with the dependencies above, which add bronze.)

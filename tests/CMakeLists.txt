@@ -58,6 +58,9 @@ endif()
 if(BROIMAGE_WITH_JIT AND TARGET brass)
     broimage_add_test(test_image_jit test_image_jit.cpp)
 endif()
+if(BROIMAGE_HAS_BROKERNEL)
+    broimage_add_test(broimage_test_kernel_filter test_kernel_filter.cpp)
+endif()
 
 if(BROIMAGE_ENABLE_API)
     add_executable(broimage_test_api

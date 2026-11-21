@@ -6,6 +6,20 @@
 #include "broimage/jit/image_pipeline.h"
 #include "broimage/jit/jit_image_compiler.h"
 
+#if BROIMAGE_HAS_BRASS_JIT
+#include <brass/codegen/image_builder.hpp>
+#include <brass/codegen/linear_scan.hpp>
+#include <brass/codegen/live_range.hpp>
+#include <brass/mir/module.hpp>
+#include <brass/mir/pass_catalog.hpp>
+#include <brass/mir/pass_manager.hpp>
+#include <brass/mir/verifier.hpp>
+#include <brass/target/calling_conv.hpp>
+#include <brass/target/target.hpp>
+#include <brass/target/x64/x64_isel.hpp>
+#include <brass/verify/smt_equiv.hpp>
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -268,6 +282,101 @@ static void test_error_handling_and_cache() {
     }
 }
 
+static void test_jit_brass_verify() {
+    std::printf("--- Test: Brass MIR/LIR Formal Verification ---\n");
+#if BROIMAGE_HAS_BRASS_JIT
+    auto verify_kernel = [](const char* name, auto build_fn) {
+        brass::Module mod_before(name);
+        brass::Module mod_after(name);
+        brass::Function* fn_before = build_fn(mod_before);
+        brass::Function* fn_after = build_fn(mod_after);
+        CHECK(fn_before != nullptr);
+        CHECK(fn_after != nullptr);
+        if (!fn_before || !fn_after) return;
+
+        fn_before->rebuild_cfg_predecessors();
+        fn_after->rebuild_cfg_predecessors();
+
+        brass::DiagnosticReporter diag_before;
+        bool ok_before = brass::verify_module(mod_before, &diag_before);
+        if (!ok_before) {
+            std::fprintf(stderr, "  MIR verify_before diagnostics in %s:\n%s\n",
+                         name, diag_before.format_all().c_str());
+        }
+        CHECK(ok_before);
+        brass::DiagnosticReporter diag_pre;
+        bool ok_pre = brass::verify_module(mod_after, &diag_pre);
+        if (!ok_pre) {
+            std::fprintf(stderr, "  MIR verify_pre diagnostics in %s:\n%s\n",
+                         name, diag_pre.format_all().c_str());
+        }
+        CHECK(ok_pre);
+
+        brass::Pipeline pipe;
+        pipe.add(brass::passes::gvn());
+        pipe.add(brass::passes::sccp(true));
+        pipe.add(brass::passes::cfg_simplify());
+        pipe.add(brass::passes::smt_guard_elim({}, 2000));
+        pipe.add(brass::passes::mir_superopt({}, 1200));
+        brass::run_pipeline(mod_after, pipe);
+
+        brass::DiagnosticReporter diag_after;
+        bool ok_after = brass::verify_module(mod_after, &diag_after);
+        if (!ok_after) {
+            std::fprintf(stderr, "  MIR verify_after diagnostics in %s:\n%s\n",
+                         name, diag_after.format_all().c_str());
+        }
+        CHECK(ok_after);
+        CHECK(brass::verify_module_certificates(mod_after));
+
+        brass::verify::EquivOptions eq_opts;
+        eq_opts.loop_unroll_bound = 2;
+        eq_opts.max_paths = 32;
+        eq_opts.max_sat_conflicts = 4000;
+        auto eq = brass::verify::verify_mir_equivalence(*fn_before, *fn_after, eq_opts);
+        if (eq.is_counterexample()) {
+            std::fprintf(stderr, "  MIR equiv counterexample in %s: %s\n", name, eq.diagnostic.c_str());
+        }
+        CHECK(!eq.is_counterexample());
+
+        if (brass::Target::host().is_x64()) {
+            const brass::Target host = brass::Target::host();
+            const brass::CallingConvention cc = brass::CallingConvention::for_target(host);
+            brass::x64::X64ISel isel(host, cc);
+            isel.set_callee_module(&mod_after);
+            auto lir = isel.lower(*fn_after);
+            CHECK(lir != nullptr);
+            if (lir) {
+                lir->sort_blocks_rpo();
+                brass::codegen::LivenessAnalysis live(*lir);
+                live.run();
+                brass::codegen::LinearScanAllocator regalloc(*lir, live, cc);
+                regalloc.allocate();
+                auto peep = brass::verify::verify_x64_peephole(*lir);
+                if (peep.is_counterexample()) {
+                    std::fprintf(stderr, "  x64 peephole counterexample in %s: %s\n",
+                                 name, peep.diagnostic.c_str());
+                }
+                CHECK(!peep.is_counterexample());
+            }
+        }
+        std::printf("  Verified %s (MIR + certificates + equiv=%d)\n",
+                    name, static_cast<int>(eq.status));
+    };
+
+    verify_kernel("image_resize_rgba8", [](brass::Module& m) {
+        brass::codegen::ImageBuilder b(m);
+        return b.build_resize_rgba8_function("image_resize_rgba8");
+    });
+    verify_kernel("image_preproc_fused", [](brass::Module& m) {
+        brass::codegen::ImageBuilder b(m);
+        return b.build_fused_preproc_function("image_preproc_fused", 3);
+    });
+#else
+    std::printf("  [SKIP] BRASS JIT disabled\n");
+#endif
+}
+
 static void run_benchmarks() {
     std::printf("--- Benchmark: JIT Throughput ---\n");
     if (!broimage::jit::JitImageCompiler::is_supported()) {
@@ -337,6 +446,7 @@ int main() {
     test_jit_rgba8_resize();
     test_jit_fused_preproc();
     test_error_handling_and_cache();
+    test_jit_brass_verify();
     run_benchmarks();
 
     if (g_failed == 0) {

@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -81,30 +80,7 @@ void run_multithreaded_slices(int dst_h, SliceFn&& slice_fn) {
 
 #if BROIMAGE_HAS_BRASS_JIT
 std::filesystem::path image_cache_directory() {
-    if (const char* env_dir = std::getenv("BROIMAGE_CACHE_DIR"); env_dir && env_dir[0] != '\0') {
-        return std::filesystem::path(env_dir);
-    }
-#if defined(_WIN32)
-    if (const char* local_app = std::getenv("LOCALAPPDATA"); local_app && local_app[0] != '\0') {
-        return std::filesystem::path(local_app) / "broimage" / "kernels";
-    }
-    if (const char* user_prof = std::getenv("USERPROFILE"); user_prof && user_prof[0] != '\0') {
-        return std::filesystem::path(user_prof) / ".cache" / "broimage" / "kernels";
-    }
-#else
-    if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && xdg[0] != '\0') {
-        return std::filesystem::path(xdg) / "broimage" / "kernels";
-    }
-    if (const char* home = std::getenv("HOME"); home && home[0] != '\0') {
-        return std::filesystem::path(home) / ".cache" / "broimage" / "kernels";
-    }
-#endif
-    std::error_code ec;
-    auto tmp = std::filesystem::temp_directory_path(ec);
-    if (!ec && !tmp.empty()) {
-        return tmp / "broimage" / "kernels";
-    }
-    return std::filesystem::path(".cache") / "broimage" / "kernels";
+    return brass::cache::default_cache_dir("broimage", "kernels", "BROIMAGE_CACHE_DIR");
 }
 
 brass::cache::NativeModuleCache& image_native_cache() {

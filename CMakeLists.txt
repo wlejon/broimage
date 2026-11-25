@@ -247,6 +247,7 @@ if(BROIMAGE_WITH_JIT AND TARGET brass)
     target_sources(broimage PRIVATE
         src/jit/image_pipeline.cpp
         src/jit/jit_image_compiler.cpp
+        src/jit/mir_image_kernels.cpp
     )
     if(OpenMP_CXX_FOUND)
         target_link_libraries(broimage PUBLIC OpenMP::OpenMP_CXX)

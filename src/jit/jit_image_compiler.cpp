@@ -98,7 +98,7 @@ brass::codegen::KernelFunction compile_cached_image_kernel(
     BuildFn&& build_fn) {
     using namespace brass::codegen;
     KernelOptions opts;
-    brass::cache::KeyBuilder kb("broimage.kernel/1");
+    brass::cache::KeyBuilder kb("broimage.kernel/2");
     kb.add("kind", kind);
     kb.add_u64("opt_level", static_cast<uint64_t>(opts.opt_level));
     kb.add_bool("enable_optimizations", opts.enable_optimizations);
@@ -113,6 +113,10 @@ brass::codegen::KernelFunction compile_cached_image_kernel(
     kb.add_bool("enable_slp", opts.enable_slp);
     kb.add_bool("enable_unroll", opts.enable_unroll);
     kb.add_u64("unroll_factor", static_cast<uint64_t>(opts.unroll_factor));
+    kb.add_bool("enable_trace_layout", opts.enable_trace_layout);
+    kb.add_bool("enable_pre_ra_schedule", opts.enable_pre_ra_schedule);
+    kb.add_bool("enable_post_ra_schedule", opts.enable_post_ra_schedule);
+    kb.add_bool("enable_software_pipelining", opts.enable_software_pipelining);
     kb.add_bool("enable_parallel", opts.enable_parallel);
     kb.add_bool("enable_ftz_daz", opts.enable_ftz_daz);
 
